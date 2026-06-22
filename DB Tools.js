@@ -1,0 +1,3507 @@
+/** ========== MENU BUILDER ========== Updated 4/25/26   
+*/
+
+
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+
+  // Manual Entry submenu
+  const manualEntryMenu = ui.createMenu('Manual Entry')
+    .addItem('Send Entry to Import', 'sendEntryToImport');
+
+  // Raw Data for Sorting submenu (TOS ingest)
+  const TosSchwabImport = ui.createMenu('Raw Data for Sorting')
+    .addItem('Set folder (LT): TosTrades', 'tosTradesSetFolderIdLT')
+    .addItem('Set folder (LT): TosTop', 'tosTopSetFolderIdLT')
+    .addItem('Set folder (DT): TosTrades', 'tosTradesSetFolderIdDT')
+    .addItem('Set folder (DT): TosTop', 'tosTopSetFolderIdDT')
+    .addSeparator()
+
+    // Import raw CSVs -> Combined
+    .addItem('Import TosTrades Current Account → TOS Trades - Combined', 'tosTradesImportFromFolderCurrentAccount')
+    .addItem('Import TosTop Current Account → TOS Top - Combined', 'tosTopImportFromFolderCurrentAccount')
+    .addSeparator()
+
+    // Import BOTH accounts -> Combined
+    .addItem('Import TosTrades BOTH Accounts → TOS Trades - Combined', 'tosTradesImportFromFolderBothAccounts')
+    .addItem('Import TosTop BOTH Accounts → TOS Top - Combined', 'tosTopImportFromFolderBothAccounts')
+    .addSeparator()
+
+    // Blank/reset staging
+    .addItem('Blank TOS Trades - Combined', 'tosBlankTOSTradesCombined')
+    .addItem('Blank TOS Trades', 'tosBlankTosTrades')
+    .addItem('Blank TOS Top - Combined', 'tosBlankTOSTopCombined')
+    .addItem('Blank TOS Top', 'tosBlankTosTop')
+    .addItem('Blank all TOS sheets', 'tosBlankALLTOSSheets')
+    .addSeparator()
+
+    // Push Combined -> TosTop / TosTrades
+    .addItem('Push: TOS Trades - Combined → TosTrades', 'pushTosTradesCombinedToTosTrades')
+    .addItem('Push: TOS Top - Combined → TosTop', 'pushTosTopCombinedToTosTop')
+    .addItem('Push BOTH (Top + Trades)', 'pushTosCombinedToBoth')
+    .addSeparator()
+
+    // One button end-to-end raw -> Schwab Import
+    .addItem('Run FULL (BOTH Accounts): CSV → Combined → TosTop/TosTrades → Schwab Import', 'tosRunFullTosToSchwabImportBothAccounts');
+
+
+  const settingsMenu = ui.createMenu('Settings')
+    .addItem('Set Account Mode DT / LT', `promptSetAccountMode`)
+    .addItem('Toggle TOS Import DEBUG Alerts', `promptToggleTosImportDebugAlerts`)
+    .addSeparator()
+    .addItem('Set Import Issues Write Mode', `promptSetImportIssuesWriteMode`)
+    .addItem('Set Mapping Issues Write Mode', `promptSetMappingIssuesWriteMode`)
+    .addItem('Set Staging Issues Write Mode', `promptSetStagingIssuesWriteMode`)
+    .addItem('Show Current Settings', `showCurrentSettingsDialog`);
+
+  // Schwab Actions submenu
+  const schwabActionsMenu = ui.createMenu('Schwab Actions')
+    .addItem('Build Unified Import V3', 'buildUnifiedImportV3')
+    .addItem('Run Schwab Mapping Script', 'mapSchwabImportByHeadersV3')
+    .addItem('2b. Audit Schwab Mapping (pre-Phase-3 gate)', 'auditSchwabMappingV3')
+    .addItem('Move Schwab Mapping to Import', 'copyMappingToImportByHeaders')
+    .addItem('Blank Schwab Import', 'clearSchwabImportExceptHeader')
+    .addItem('Blank Schwab Mapping', 'clearSchwabMappingExceptHeader')
+    .addItem('Blank all Schwab Sheets', 'blankAllSchwabSheets')
+    .addSeparator()
+    .addSubMenu(settingsMenu);
+
+  // Data Actions submenu (unchanged)
+  const dataActionsMenu = ui.createMenu('Data Actions')
+    .addItem('Schwab Mapping to Import and run scripts', 'refreshAllScripts')
+    .addItem('Run Audit on Staging - Final Check before push to Master', 'auditPipelineIntegrity')
+    .addItem('Push Staging → Master (Append)', 'appendStagingToMaster')
+    .addItem('Backup Master (Snapshot)', 'backupMasterSheet')
+    .addSeparator()
+    .addItem('Blank Import', 'blankImport')
+    .addItem('Blank Helper', 'blankHelper')
+    .addItem('Blank Staging', 'blankStaging')
+    .addItem('Blank ALL Prep Sheets', 'blankAllPrepSheets')
+    .addSeparator()
+    .addItem('Blank Master', 'clearMasterExceptHeader');
+
+
+  // Top-level menu
+  ui.createMenu('DB Tools')
+    .addSubMenu(manualEntryMenu)
+    .addSubMenu(TosSchwabImport)
+    .addSubMenu(schwabActionsMenu)
+    .addSubMenu(dataActionsMenu)
+    .addToUi();
+}
+
+
+/**
+ * auditOpenPositions
+ *
+ * Standalone diagnostic function. Reads the Staging sheet and writes a
+ * summary of every Trade Group ID / Position ID whose Running Position
+ * Quantity is non-zero (i.e. the block never closed flat).
+ *
+ * Output sheet: "Open Positions Audit"
+ * One row per open block. Columns:
+ *   Account | Ticker | Trade Group ID | Position ID | Strategy Type |
+ *   Trade Type | Block Number | Block Start Date | Last Activity Date |
+ *   Days Open | Running Position Quantity | Legs In Block | First Action | Notes
+ *
+ * WHY a separate sheet instead of an alert:
+ *   ~18,000 rows may produce dozens of open positions. A sheet lets you
+ *   sort by Days Open, filter by Account, or CTRL+F a specific ticker
+ *   without running the function again.
+ *
+ * HOW TO RUN:
+ *   Apps Script editor → select auditOpenPositions → click Run.
+ *   Or add a menu item pointing to this function.
+ */
+function auditOpenPositions() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const stagingSheet = ss.getSheetByName('Staging');
+  if (!stagingSheet) {
+    SpreadsheetApp.getUi().alert('Staging sheet not found.');
+    return;
+  }
+
+  const tz = ss.getSpreadsheetTimeZone();
+
+  // ── Read Staging ────────────────────────────────────────────────────────────
+  const allData = stagingSheet.getDataRange().getValues();
+  if (allData.length < 4) {
+    SpreadsheetApp.getUi().alert('No data in Staging.');
+    return;
+  }
+
+  // Build colMap from header row (row 1, index 0).
+  const colMap = {};
+  allData[0].forEach((h, i) => {
+    if (typeof h === 'string' && h.trim()) colMap[h.trim().toLowerCase()] = i;
+  });
+
+  // Helper: safe column read — returns '' if column doesn't exist.
+  const get = (row, col) => (colMap[col] !== undefined ? row[colMap[col]] : '');
+
+  // Data starts at row 4 (index 3) — rows 1-3 are headers/metadata.
+  const dataRows = allData.slice(3);
+
+  // ── Build one summary object per Trade Group ID ─────────────────────────────
+  // Key = Trade Group ID. We track:
+  //   - The final Running Position Quantity (last row for this TG ID)
+  //   - Block Number
+  //   - Block Start Date (Trade Date of the blkStart=1 row)
+  //   - Last Activity Date (Trade Date of the most recent row)
+  //   - Leg count (rows in this TG ID)
+  //   - First Action on the block
+  //   - Account, Ticker, Strategy Type, Trade Type, Position ID
+  const groups = {};
+
+  for (const row of dataRows) {
+    const tgId = get(row, 'trade group id').toString().trim();
+    const posId = get(row, 'position id').toString().trim();
+    const account = get(row, 'account').toString().trim();
+    const ticker = get(row, 'ticker').toString().trim();
+    const stratType = get(row, 'strategy type').toString().trim();
+    const tradeType = get(row, 'trade type').toString().trim();
+    const blockNum = get(row, 'block number');
+    const blkStartFlag = get(row, 'block start flag');
+    const runQty = Number(get(row, 'running position quantity')) || 0;
+    const tradeDate = get(row, 'trade date');
+    const action = get(row, 'action').toString().trim();
+    const blockClose = get(row, 'block close flag/p&l');
+
+    if (!tgId) continue; // skip ledger rows with no Trade Group ID
+
+    if (!groups[tgId]) {
+      groups[tgId] = {
+        tgId,
+        posId,
+        account,
+        ticker,
+        stratType,
+        tradeType,
+        blockNum,
+        blockStartDate: null,
+        lastActivityDate: null,
+        runningQty: 0,
+        legCount: 0,
+        firstAction: '',
+        isClosed: false,
+      };
+    }
+
+    const g = groups[tgId];
+
+    // Always update to the latest runningQty and lastActivityDate seen.
+    g.runningQty = runQty;
+    g.legCount += 1;
+    if (tradeDate instanceof Date) {
+      if (!g.lastActivityDate || tradeDate > g.lastActivityDate) {
+        g.lastActivityDate = tradeDate;
+      }
+    }
+
+    // Capture block start date and first action from the blkStart=1 row.
+    if (blkStartFlag === 1 || blkStartFlag === '1') {
+      if (tradeDate instanceof Date) g.blockStartDate = tradeDate;
+      g.firstAction = action;
+    }
+
+    // Mark closed if any row has Block Close Flag = 1.
+    if (blockClose === 1 || blockClose === '1') g.isClosed = true;
+  }
+
+  // ── Filter to OPEN positions only ──────────────────────────────────────────
+  // A position is "open" if:
+  //   (a) Running Position Quantity !== 0   ← the primary signal
+  //   OR
+  //   (b) isClosed is false AND legCount > 0  ← catches blocks with no close row
+  const today = new Date();
+  const openGroups = Object.values(groups).filter(g => g.runningQty !== 0 || !g.isClosed);
+
+  if (openGroups.length === 0) {
+    SpreadsheetApp.getUi().alert('✅ No open positions found in Staging. All blocks closed flat!');
+    return;
+  }
+
+  // Sort: Account A→Z, then Days Open descending (oldest open first).
+  openGroups.sort((a, b) => {
+    if (a.account !== b.account) return a.account.localeCompare(b.account);
+    const daysA = a.blockStartDate ? (today - a.blockStartDate) / 86400000 : 0;
+    const daysB = b.blockStartDate ? (today - b.blockStartDate) / 86400000 : 0;
+    return daysB - daysA; // descending — oldest open at top
+  });
+
+  // ── Write to "Open Positions Audit" sheet ──────────────────────────────────
+  let auditSheet = ss.getSheetByName('Open Positions Audit');
+  if (!auditSheet) {
+    auditSheet = ss.insertSheet('Open Positions Audit');
+  } else {
+    auditSheet.clearContents();
+    auditSheet.clearFormats();
+  }
+
+  // Header row.
+  const headers = [
+    'Account',
+    'Ticker',
+    'Strategy Type',
+    'Trade Type',
+    'Trade Group ID',
+    'Position ID',
+    'Block Number',
+    'Block Start Date',
+    'Last Activity Date',
+    'Days Open',
+    'Running Qty',
+    'Legs In Block',
+    'First Action',
+    'Notes',
+  ];
+
+  const outputRows = [headers];
+
+  for (const g of openGroups) {
+    const daysOpen = g.blockStartDate
+      ? Math.round((today - g.blockStartDate) / 86400000)
+      : '';
+
+    const blockStartStr = g.blockStartDate
+      ? Utilities.formatDate(g.blockStartDate, tz, 'MM/dd/yyyy')
+      : 'Unknown';
+
+    const lastActivityStr = g.lastActivityDate
+      ? Utilities.formatDate(g.lastActivityDate, tz, 'MM/dd/yyyy')
+      : 'Unknown';
+
+    // Auto-diagnose common issues for the Notes column.
+    let notes = '';
+    if (g.runningQty < 0) notes = '⚠️ Negative running qty — possible extra closing leg';
+    if (g.runningQty > 20) notes = '⚠️ Very high running qty — check for duplicate open rows';
+    if (!g.isClosed && g.legCount === 1) notes = '⚠️ Single-leg block — may be missing paired leg(s)';
+    if (daysOpen > 365) notes = (notes ? notes + ' | ' : '') + '⚠️ Open > 1 year — verify not a stale block';
+
+    outputRows.push([
+      g.account,
+      g.ticker,
+      g.stratType,
+      g.tradeType,
+      g.tgId,
+      g.posId,
+      g.blockNum,
+      blockStartStr,
+      lastActivityStr,
+      daysOpen,
+      g.runningQty,
+      g.legCount,
+      g.firstAction,
+      notes,
+    ]);
+  }
+
+  auditSheet.getRange(1, 1, outputRows.length, headers.length).setValues(outputRows);
+
+  // ── Formatting ─────────────────────────────────────────────────────────────
+  // Bold header row.
+  auditSheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#d9ead3');
+
+  // Freeze header row.
+  auditSheet.setFrozenRows(1);
+
+  // Color rows by account: DT = light blue tint, LT = light yellow tint.
+  for (let r = 2; r <= outputRows.length; r++) {
+    const acct = outputRows[r - 1][0];
+    const bg = acct === 'DT' ? '#dce6f1' : '#fff2cc';
+    auditSheet.getRange(r, 1, 1, headers.length).setBackground(bg);
+  }
+
+  // Flag rows with Notes in red.
+  for (let r = 2; r <= outputRows.length; r++) {
+    const notesVal = outputRows[r - 1][13]; // Notes column
+    if (notesVal && notesVal.includes('⚠️')) {
+      auditSheet.getRange(r, 14).setFontColor('#cc0000').setFontWeight('bold');
+    }
+  }
+
+  // Auto-resize all columns.
+  for (let c = 1; c <= headers.length; c++) {
+    auditSheet.autoResizeColumn(c);
+  }
+
+  // Navigate to the audit sheet.
+  ss.setActiveSheet(auditSheet);
+
+  SpreadsheetApp.getUi().alert(
+    `Open Positions Audit complete.\n\n` +
+    `Found ${openGroups.length} open position(s) across ${dataRows.length.toLocaleString()} Staging rows.\n\n` +
+    `Results written to "Open Positions Audit" sheet.\n` +
+    `Sorted by Account → Days Open (oldest first).`
+  );
+}
+
+/**  Helper functions
+ * 
+ * 
+*/
+
+// For DB Log
+/* =============== Log function for scripts that will output to a log  ============= */
+function logAction(action, details) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let logSheet = ss.getSheetByName('DB_log');
+  // If the log sheet doesn't exist, create it and add headers
+  if (!logSheet) {
+    logSheet = ss.insertSheet('DB_log');
+    logSheet.appendRow(['Timestamp', 'Action', 'Details']);
+  }
+  // Log the action
+  logSheet.appendRow([
+    Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
+    action,
+    details
+  ]);
+}
+
+// Tiny helpers
+function getValByHeader(row, headers, colName) {
+  const idx = headers.indexOf(colName.toLowerCase());
+  return idx > -1 ? row[idx] : "";
+}
+
+function ensureValidationErrorSheet() {
+  let sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Validation Errors");
+  if (!sheet) {
+    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Validation Errors");
+    sheet.appendRow(["Row", "Column", "Error", "Suggested Fix"]);
+  }
+  return sheet;
+}
+
+/** End Helpers
+ * 
+ * 
+ */
+
+// Run Schwab Mapping -> Staging
+
+function refreshAllScripts() {
+  // Set a stable RunId so all three Stage 3 steps share one RunId in Staging Issues.
+  // The importIssuesStart / stagingIssuesStart functions read this key automatically.
+  // const runId = new Date().toISOString(); //writes Zulu time to RunID
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+  const runId = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd HH:mm:ss zzz");
+  setSetting('ACTIVE_IMPORT_RUN_ID', runId);
+
+  try {
+    copyMappingToImportByHeaders();         // Step 1: Schwab Mapping → Import
+    validateAndCleanImportToHelperV3();     // Step 2: Validation + full timestamps
+    populateStagingWithBlockLogicV3();      // Step 3: Block logic using Trade Time Stamp
+    // auditPipelineIntegrity();               // Step 4 Read-only scan of Staging sheet. Detects data quality problems that slip past the normal pipeline 
+    SpreadsheetApp.getUi().alert(
+      "✅ Full refresh complete!\n" +
+      "RunId: " + runId + "\n\n" +
+      "Check the 'Staging Issues' sheet and filter by this RunId to review."
+    );
+  } catch (e) {
+    SpreadsheetApp.getUi().alert("❌ Pipeline error: " + e.message + "\nCheck Staging Issues sheet.");
+    throw e;
+  } finally {
+    // Always clear the active RunId — even if an error occurred
+    setSetting('ACTIVE_IMPORT_RUN_ID', '');
+  }
+}
+
+// Move Schwab Mapping to Import by Headers
+function copyMappingToImportByHeaders() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // ── Staging Issues CTX ───────────────────────────────────────────────────
+  const ctx = stagingIssuesStart('copyMappingToImportByHeaders');
+  importIssuesSetMetric(ctx, 'SourceSheet', 'Schwab Mapping');
+  importIssuesSetMetric(ctx, 'DestSheet', 'Import');
+  // ────────────────────────────────────────────────────────────────────────
+
+  // ── PRIORITY 1: try/catch/finally so the Issues log ALWAYS gets flushed ─
+  // WHY: Without this wrapper, any mid-function throw (bad sheet, empty data,
+  // regex error, etc.) exits silently and leaves ZERO log output in
+  // Staging Issues for this step — the worst time to have no diagnostics.
+  // The finally block guarantees stagingIssuesFlush(ctx) runs even on crash.
+  try {
+
+    var mappingSheet = ss.getSheetByName('Schwab Mapping');
+    var importSheet = ss.getSheetByName('Import');
+
+    // Get headers
+    var mappingHeaders = mappingSheet.getRange(1, 1, 1, mappingSheet.getLastColumn()).getValues()[0];
+    var importHeaders = importSheet.getRange(1, 1, 1, importSheet.getLastColumn()).getValues()[0];
+
+    // Build column index map (temporarily INCLUDE Description so we can parse
+    // it for RAD/EXP/EXERCISE rows)
+    var colMap = [];
+    var descriptionColInImport = -1;
+    for (var i = 0; i < importHeaders.length; i++) {
+      var headerName = importHeaders[i].trim().toLowerCase();
+      if (headerName === 'description') {
+        colMap.push(null);
+        descriptionColInImport = i;
+      } else {
+        var idx = mappingHeaders.findIndex(function (x) {
+          return typeof x === 'string' && x.trim().toLowerCase() === headerName;
+        });
+        colMap.push(idx >= 0 ? idx : null);
+      }
+    }
+
+    // === ROBUST TIMESTAMP COLUMN MAPPING ===
+    const tsHeaderNames = ['trade time stamp', 'trade date', 'trade time'];
+    for (let h of tsHeaderNames) {
+      const importIdx = importHeaders.findIndex(header => header.trim().toLowerCase() === h);
+      if (importIdx > -1) {
+        const mappingIdx = mappingHeaders.findIndex(
+          header => typeof header === 'string' && header.trim().toLowerCase() === h
+        );
+        if (mappingIdx >= 0) colMap[importIdx] = mappingIdx;
+      }
+    }
+
+    // Get all data from Schwab Mapping (row 2 down)
+    var lastMappingRow = mappingSheet.getLastRow();
+    if (lastMappingRow < 2) {
+      SpreadsheetApp.getUi().alert('No data found to copy from Schwab Mapping.');
+      return; // finally will still flush ctx
+    }
+    var numRows = lastMappingRow - 1;
+    var mappingData = mappingSheet.getRange(2, 1, numRows, mappingHeaders.length).getValues();
+
+    // ── CTX: record source row count ────────────────────────────────────────
+    importIssuesSetMetric(ctx, 'SourceRowsReadExclHeader', numRows);
+    // ────────────────────────────────────────────────────────────────────────
+
+    // === Hoist ALL column-index lookups ABOVE the row loop ==================
+    // WHY: These never change between rows. Declaring them once is faster and
+    // avoids scope issues inside nested if-blocks.
+    //
+    // PRIORITY 3 FIX: Removed duplicate `totalCostImportIdx` declaration.
+    // It was identical to `totalCostIndex` — both pointed to the same column.
+    // All references below now use `totalCostIndex` exclusively.
+    const tickerIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'ticker');
+    const quantityIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'quantity');
+    const strikeIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'option strike');
+    const expIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'option expiration');
+    const cpIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'call/put');
+    const totalCostIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'total cost');
+    const signedQuantityIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'signed quantity');
+    const strategyTypeIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'strategy type');
+    const tradeTypeIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'trade type');
+    const entryPriceIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'entry price');
+    const actionIdx = importHeaders.findIndex(h => h.trim().toLowerCase() === 'action');
+    const corpActionsIndex = importHeaders.findIndex(h => h.trim().toLowerCase() === 'corporate actions');
+    const descriptionIdx = mappingHeaders.findIndex(
+      x => typeof x === 'string' && x.trim().toLowerCase() === 'description'
+    );
+    // ========================================================================
+
+    // ── CTX counters — declared before the loop ──────────────────────────────
+    var outputData = [];
+    let skippedCount = 0;
+    let radParsed = 0;
+    let radFailed = 0;
+    let tickerNorms = 0;
+    // ────────────────────────────────────────────────────────────────────────
+
+    for (var r = 0; r < mappingData.length; r++) {
+
+      // Build rowArr mapped to Import columns
+      var rowArr = [];
+      for (var c = 0; c < colMap.length; c++) {
+        rowArr.push(colMap[c] === null ? '' : mappingData[r][colMap[c]]);
+      }
+
+      // Read Action and Description for this row
+      var action = (rowArr[actionIdx] || '').toString().trim().toUpperCase();
+      var descStr = ((descriptionIdx >= 0) ? mappingData[r][descriptionIdx] : '').toString().trim();
+      var upperDesc = descStr.toUpperCase();
+
+      // TotalCost for skip guards — uses totalCostIndex (duplicate removed, Priority 3)
+      let totalCostVal = (totalCostIndex > -1) ? (Number(rowArr[totalCostIndex]) || 0) : 0;
+
+      // ── SKIP 1: TOS duplicate BTO Stock row from EXERCISE ─────────────────
+      // Schwab emits both a correct "Synthetic STOCK leg from EXERCISE" row
+      // (TotalCost = Price × Qty) AND a spurious "TOS Trades BUY STOCK TO OPEN"
+      // row where TotalCost is 100× too large due to the options contract multiplier.
+      // FINGERPRINT: TotalCost ≈ EntryPrice × Quantity × 100 (0.1% float tolerance).
+      if (upperDesc.includes('TOS TRADES') &&
+        upperDesc.includes('BUY') &&
+        upperDesc.includes('STOCK') &&
+        upperDesc.includes('TO OPEN')) {
+
+        const epForSkip = (entryPriceIndex > -1) ? (Number(rowArr[entryPriceIndex]) || 0) : 0;
+        const qtyForSkip = (quantityIndex > -1) ? (Number(rowArr[quantityIndex]) || 0) : 0;
+        const expectedCorrectCost = epForSkip * qtyForSkip;
+
+        const isOptionsMultiplierError = expectedCorrectCost > 0 &&
+          Math.abs(totalCostVal - expectedCorrectCost * 100) / (expectedCorrectCost * 100) < 0.001;
+
+        if (isOptionsMultiplierError) {
+          skippedCount++;
+          importIssuesAdd(ctx, 'SKIP', r + 2, 'Description',
+            upperDesc.substring(0, 80),
+            'TOS EXERCISE duplicate skipped — TotalCost (' + totalCostVal +
+            ') is 100× the correct cost (' + expectedCorrectCost +
+            '). Synthetic STOCK leg row carries the correct values.');
+          continue;
+        }
+        // If NOT a 100× error → fall through and keep the row normally.
+      }
+
+      // ── SKIP 2: Synthetic exercise stock leg duplicate ────────────────────
+      if (upperDesc.includes('EXERCISE') &&
+        upperDesc.includes('SYNTHETIC') &&
+        upperDesc.includes('STOCK LEG') &&
+        !upperDesc.includes('FROM EXERCISE')) {
+        skippedCount++;
+        importIssuesAdd(ctx, 'SKIP', r + 2, 'Description',
+          upperDesc.substring(0, 80),
+          'Synthetic exercise stock leg skipped');
+        continue;
+      }
+
+      // ── Corporate Action / RAD / EXP / Exercise parsing ───────────────────
+      if ((action === 'RAD' || action === 'EXP' ||
+        upperDesc.includes('EXERCISE') || upperDesc.includes('ASSIGNMENT') ||
+        upperDesc.includes('BOT') || upperDesc.includes('UPON') ||
+        upperDesc.includes('SYNTHETIC') || upperDesc.includes('REMOVED DUE TO')) && descStr) {
+
+        // CORPORATE ACTION PASS-THROUGH ──────────────────────────────────────
+        // Phase 2 is the single authoritative source for Corporate Actions tagging.
+        // colMap already populated rowArr[corpActionsIndex] from Schwab Mapping.
+        // We check whether that value is present and skip option parsing if so.
+        const existingCorpAction = (corpActionsIndex !== -1)
+          ? String(rowArr[corpActionsIndex] || '').trim()
+          : '';
+        const corpUpper = existingCorpAction.toUpperCase();
+
+        if (existingCorpAction) {
+          const corpTicker = (tickerIndex > -1)
+            ? String(rowArr[tickerIndex] || '').trim().toUpperCase()
+            : '';
+
+          // Make stock-lineage corporate actions explicit before they ever reach Import.
+          // This avoids downstream ambiguity where the row survives validation but still
+          // looks too blank to the stock block logic.
+          if ((corpUpper === 'SYMBOL CHANGE' || corpUpper === 'SPLIT') && corpTicker) {
+            if (actionIdx > -1 && !String(rowArr[actionIdx] || '').trim()) {
+              rowArr[actionIdx] = corpUpper;
+            }
+            if (tradeTypeIndex > -1) rowArr[tradeTypeIndex] = 'Stock';
+            if (strategyTypeIndex > -1 && !String(rowArr[strategyTypeIndex] || '').trim()) {
+              rowArr[strategyTypeIndex] = 'LONG STOCK';
+            }
+
+            importIssuesAdd(
+              ctx,
+              'INFO',
+              r + 2,
+              'Corporate Actions',
+              corpUpper + ' | ' + corpTicker,
+              'Corporate action row passed through with explicit stock Action / Trade Type / Strategy Type for downstream block logic.'
+            );
+          }
+
+          if (descriptionColInImport !== -1) rowArr[descriptionColInImport] = '';
+          outputData.push(rowArr);
+          continue;
+        }
+        // END CORPORATE ACTION PASS-THROUGH ───────────────────────────────────
+
+        // Guard: BOT/SOLD UPON rows are stock legs from exercise/assignment.
+        // They are handled by the dedicated BOT/SOLD UPON parser below and must
+        // NEVER enter the option-removal parser, even if the description also
+        // contains EXERCISE or ASSIGNMENT.
+        const isBotSoldUpon = ((upperDesc.includes('BOT') || upperDesc.includes('SOLD'))
+          && upperDesc.includes('UPON'));
+
+        const looksLikeOptionRemoval = !isBotSoldUpon && (
+          upperDesc.includes('REMOVAL OF OPTION') ||  // Formats A and D
+          upperDesc.includes('REMOVED DUE TO') ||  // Format B
+          /\.[A-Z]{1,6}\d{6}[CP]\d/i.test(descStr)    // Format C: bare OCC symbol
+        );
+
+        // WHY !isBotSoldUpon prefix on the EXP arm: Schwab stamps some
+        // BOT/SOLD UPON stock-delivery legs with action=EXP. Without this guard
+        // they fall into the option-removal parser and fail all four formats.
+        if (!isBotSoldUpon && (looksLikeOptionRemoval || action === 'EXP')) {
+
+          let parsed = false;
+
+          // ── FORMAT A ───────────────────────────────────────────────────────
+          // "Removal of Option due to expiration QTY TICKER 100 (opt) DD MON YY[YY] STRIKE CALL|PUT"
+          const removalMatch = descStr.match(
+            /Removal of Option due to expiration\s*([-+]?\d+\.?\d*)\s*(\S+)\s+\d+\s*(?:\([^)]+\))?\s*(\d{1,2})\s*(\w{3})\s*(\d{2,4})\s*(\d+\.?\d*)\s*(CALL|PUT)/i
+          );
+          if (removalMatch) {
+            const qtyStr = removalMatch[1];
+            const tkr = removalMatch[2];
+            const day = removalMatch[3];
+            const monStr = removalMatch[4].toUpperCase();
+            const year = removalMatch[5];
+            const strikeStr = removalMatch[6];
+            const cpStr = removalMatch[7].toUpperCase();
+
+            const yearFull = year.length === 2
+              ? (Number(year) <= 29 ? '20' + year : '19' + year)
+              : year;
+
+            // PRIORITY 4: Ticker normalization ($SPX.X → SPX) — Format A already had this. ✅
+            if (tickerIndex > -1 && tkr) {
+              const tkrNorm = tkr.toUpperCase().replace(/^\$/, '').replace(/\.[A-Z]+$/, '');
+              rowArr[tickerIndex] = tkrNorm;
+              if (tkrNorm !== tkr.toUpperCase()) {
+                tickerNorms++;
+                importIssuesAdd(ctx, 'INFO', r + 2, 'Ticker',
+                  tkr + ' → ' + tkrNorm,
+                  'RAD ticker normalized from Schwab alternate index symbol (Format A)');
+              }
+            }
+
+            const qtyNum = Number(qtyStr);
+            if (quantityIndex > -1) rowArr[quantityIndex] = qtyNum;
+            if (signedQuantityIndex > -1) rowArr[signedQuantityIndex] = qtyNum;
+            if (strikeIndex > -1) rowArr[strikeIndex] = Number(strikeStr);
+            if (cpIndex > -1) rowArr[cpIndex] = (cpStr === 'CALL') ? 'C' : 'P';
+            if (expIndex > -1) {
+              const monthMap = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+              rowArr[expIndex] = new Date(Number(yearFull), (monthMap[monStr] || 1) - 1, Number(day));
+            }
+            if (totalCostIndex > -1) rowArr[totalCostIndex] = 0;
+            if (entryPriceIndex > -1) rowArr[entryPriceIndex] = 0;
+            if (strategyTypeIndex > -1) rowArr[strategyTypeIndex] = '';
+            if (tradeTypeIndex > -1) rowArr[tradeTypeIndex] = 'Option';
+            radParsed++;
+            parsed = true;
+          }
+
+          // ── FORMAT B ───────────────────────────────────────────────────────
+          // "Removed due to Expiration/Assignment ... QTY .OCCSTRING"
+          // OCC symbol: .TICKER[6-digit YYMMDD][C|P][STRIKE]
+          // Examples: "... -6.0 .SPY241231P580"  |  "... 2.0 .UUUU241220P6"
+          if (!parsed) {
+            const occMatch = descStr.match(
+              /Removed due to (?:Expiration|Assignment).*?\s+([-+]?\d+\.?\d*)\s+\.([A-Z0-9]+?)(\d{6})([CP])(\d+\.?\d*)\s*$/i
+            );
+            if (occMatch) {
+              const qtyStr = occMatch[1];
+              const tkr = occMatch[2].toUpperCase();
+              const yymmdd = occMatch[3];
+              const cpStr = occMatch[4].toUpperCase();
+              const strikeStr = occMatch[5];
+
+              const yy = Number(yymmdd.substring(0, 2));
+              const mm = Number(yymmdd.substring(2, 4)) - 1;
+              const dd = Number(yymmdd.substring(4, 6));
+              const fullYear = yy <= 29 ? 2000 + yy : 1900 + yy;
+
+              // PRIORITY 4 FIX: Format B was missing ticker normalization.
+              // Added same $-strip and .X-suffix-strip as Formats A and D.
+              if (tickerIndex > -1) {
+                const tkrNorm = tkr.replace(/^\$/, '').replace(/\.[A-Z]+$/, '');
+                rowArr[tickerIndex] = tkrNorm;
+                if (tkrNorm !== tkr) {
+                  tickerNorms++;
+                  importIssuesAdd(ctx, 'INFO', r + 2, 'Ticker',
+                    tkr + ' → ' + tkrNorm,
+                    'RAD ticker normalized from Schwab alternate index symbol (Format B)');
+                }
+              }
+
+              const qtyNum = Number(qtyStr);
+              if (quantityIndex > -1) rowArr[quantityIndex] = qtyNum;
+              if (signedQuantityIndex > -1) rowArr[signedQuantityIndex] = qtyNum;
+              if (strikeIndex > -1) rowArr[strikeIndex] = Number(strikeStr);
+              if (cpIndex > -1) rowArr[cpIndex] = cpStr; // already C or P
+              if (expIndex > -1) rowArr[expIndex] = new Date(fullYear, mm, dd);
+              if (totalCostIndex > -1) rowArr[totalCostIndex] = 0;
+              if (entryPriceIndex > -1) rowArr[entryPriceIndex] = 0;
+              if (strategyTypeIndex > -1) rowArr[strategyTypeIndex] = '';
+              if (tradeTypeIndex > -1) rowArr[tradeTypeIndex] = 'Option';
+
+              const isAssignment = upperDesc.includes('ASSIGNMENT');
+              if (isAssignment) {
+                importIssuesAdd(ctx, 'INFO', r + 2, 'Action',
+                  tkr + ' ' + cpStr + ' ' + strikeStr + ' exp ' + yymmdd,
+                  'Assignment row parsed via Format B OCC symbol — verify stock leg exists in dataset');
+              }
+              radParsed++;
+              parsed = true;
+            }
+          }
+
+          // ── FORMAT C ───────────────────────────────────────────────────────
+          // RAD row with bare OCC symbol — no "Removed due to" prefix.
+          // Example: "PUT ENERGY FUELS INC $6 EXP 08/16/24: ASG: 1.0 .UUUU240816P6"
+          if (!parsed) {
+            const occBareMatch = descStr.match(
+              /([-+]?\d+\.?\d*)\s+\.([A-Z0-9]+?)(\d{6})([CP])(\d+\.?\d*)\s*$/i
+            );
+            if (occBareMatch) {
+              const qtyStr = occBareMatch[1];
+              const tkr = occBareMatch[2].toUpperCase();
+              const yymmdd = occBareMatch[3];
+              const cpStr = occBareMatch[4].toUpperCase();
+              const strikeStr = occBareMatch[5];
+
+              const yy = Number(yymmdd.substring(0, 2));
+              const mm = Number(yymmdd.substring(2, 4)) - 1;
+              const dd = Number(yymmdd.substring(4, 6));
+              const fullYear = yy <= 29 ? 2000 + yy : 1900 + yy;
+
+              // PRIORITY 4 FIX: Format C was missing ticker normalization.
+              // Added same $-strip and .X-suffix-strip as Formats A and D.
+              if (tickerIndex > -1) {
+                const tkrNorm = tkr.replace(/^\$/, '').replace(/\.[A-Z]+$/, '');
+                rowArr[tickerIndex] = tkrNorm;
+                if (tkrNorm !== tkr) {
+                  tickerNorms++;
+                  importIssuesAdd(ctx, 'INFO', r + 2, 'Ticker',
+                    tkr + ' → ' + tkrNorm,
+                    'RAD ticker normalized from Schwab alternate index symbol (Format C)');
+                }
+              }
+
+              const qtyNum = Number(qtyStr);
+              if (quantityIndex > -1) rowArr[quantityIndex] = qtyNum;
+              if (signedQuantityIndex > -1) rowArr[signedQuantityIndex] = qtyNum;
+              if (strikeIndex > -1) rowArr[strikeIndex] = Number(strikeStr);
+              if (cpIndex > -1) rowArr[cpIndex] = cpStr;
+              if (expIndex > -1) rowArr[expIndex] = new Date(fullYear, mm, dd);
+              if (totalCostIndex > -1) rowArr[totalCostIndex] = 0;
+              if (entryPriceIndex > -1) rowArr[entryPriceIndex] = 0;
+              if (strategyTypeIndex > -1) rowArr[strategyTypeIndex] = '';
+              if (tradeTypeIndex > -1) rowArr[tradeTypeIndex] = 'Option';
+
+              const isAssignment = upperDesc.includes('ASG:');
+              importIssuesAdd(ctx, 'INFO', r + 2, 'Action',
+                tkr + ' ' + cpStr + ' $' + strikeStr + ' exp ' + yymmdd,
+                'Format C — bare OCC assignment/expiration parsed. ' +
+                (isAssignment
+                  ? 'ASSIGNMENT: verify BOT UPON stock leg exists on same date.'
+                  : 'EXPIRATION'));
+              radParsed++;
+              parsed = true;
+            }
+          }
+
+          // ── FORMAT D ───────────────────────────────────────────────────────
+          // "Removal of Option due to exercise/assignment [-]QTY TICKER
+          //  100 (PERIOD) DD Mon YY[YY] STRIKE CALL|PUT"
+          // Examples:
+          //   "REMOVAL OF OPTION DUE TO EXERCISE -10.0 SPY 100 (Weeklys) 10 JUN 22 402 PUT"
+          //   "Removal of Option due to exercise -1.0 $SPX.X 100 (WEEKLY) 31 Aug 2023 4515.0 PUT"
+          if (!parsed) {
+            const removalExAsgMatch = descStr.match(
+              /Removal of Option due to (?:exercise|assignment)[-\s]?([-\d.]{1,23})\s+(\$?[A-Z][A-Z0-9.]*)\s+100\s*(?:\([^)]+\))?\s*(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{2,4})\s+([\d.]+)\s+(CALL|PUT)/i
+            );
+            if (removalExAsgMatch) {
+              const qtyStr = removalExAsgMatch[1];
+              const tkr = removalExAsgMatch[2];
+              const day = removalExAsgMatch[3];
+              const monStr = removalExAsgMatch[4].toUpperCase();
+              const year = removalExAsgMatch[5];
+              const strikeStr = removalExAsgMatch[6];
+              const cpStr = removalExAsgMatch[7].toUpperCase();
+
+              const yearFull = year.length === 2
+                ? (Number(year) <= 29 ? '20' + year : '19' + year)
+                : year;
+
+              // PRIORITY 4: Ticker normalization — Format D already had this. ✅
+              const tkrNorm = tkr.toUpperCase().replace(/^\$/, '').replace(/\.[A-Z]+$/, '');
+              if (tickerIndex > -1) rowArr[tickerIndex] = tkrNorm;
+              if (tkrNorm !== tkr.toUpperCase()) tickerNorms++;
+
+              const qtyNum = Number(qtyStr);
+              if (quantityIndex > -1) rowArr[quantityIndex] = qtyNum;
+              if (signedQuantityIndex > -1) rowArr[signedQuantityIndex] = qtyNum;
+              if (strikeIndex > -1) rowArr[strikeIndex] = Number(strikeStr);
+              if (cpIndex > -1) rowArr[cpIndex] = cpStr === 'CALL' ? 'C' : 'P';
+              if (expIndex > -1) {
+                const monthMap = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+                rowArr[expIndex] = new Date(Number(yearFull), (monthMap[monStr] || 1) - 1, Number(day));
+              }
+              if (totalCostIndex > -1) rowArr[totalCostIndex] = 0;
+              if (entryPriceIndex > -1) rowArr[entryPriceIndex] = 0;
+              if (strategyTypeIndex > -1) rowArr[strategyTypeIndex] = '';
+              if (tradeTypeIndex > -1) rowArr[tradeTypeIndex] = 'Option';
+
+              const isAsg = upperDesc.includes('ASSIGNMENT');
+              importIssuesAdd(ctx, 'INFO', r + 2, 'Action',
+                `${tkrNorm} ${cpStr === 'CALL' ? 'C' : 'P'} ${strikeStr} exp ${day}${monStr}${yearFull}`,
+                `Format D: Removal of Option due to ${isAsg ? 'ASSIGNMENT' : 'EXERCISE'} parsed. ` +
+                (isAsg
+                  ? 'Confirm matching BUY/SELL stock leg exists on the same Trade Date.'
+                  : 'Confirm matching BOT UPON row exists on the same Trade Date.'));
+              radParsed++;
+              parsed = true;
+            }
+          }
+          // ── END FORMAT D ───────────────────────────────────────────────────
+
+          // No format matched — genuine parse failure
+          if (!parsed) {
+            radFailed++;
+            importIssuesAdd(ctx, 'WARN', r + 2, 'Description', descStr.substring(0, 120),
+              'RAD/Removal row — no regex matched. New Schwab format? Add a Format E block to the RAD parser.');
+          }
+
+        } // end option-removal parser block
+
+        // ── BOT / SOLD UPON Stock Assignment & Exercise Legs ─────────────────
+        // Schwab emits a separate stock row for every option exercise or assignment.
+        // The row arrives with a blank Action but Ticker is already pre-mapped from
+        // the Schwab Mapping Ticker column. We set Action, Qty, Entry Price, and
+        // Total Cost — and MUST NOT overwrite the pre-mapped ticker when the
+        // description contains a CUSIP instead of a symbol.
+        //
+        // BOT  [QTY] [TICKER|CUSIP] UPON ... → action = BUY TO OPEN,    signedQty = +qty
+        // SOLD [QTY] [TICKER|CUSIP] UPON ... → action = SELL TO CLOSE,  signedQty = -qty
+        if ((upperDesc.includes('BOT') || upperDesc.includes('SOLD')) && upperDesc.includes('UPON')) {
+          const botSoldUponMatch = descStr.match(/(BOT|SOLD)\s+([-\d.]+)\s+([A-Z0-9]+)\s+UPON/i);
+          if (botSoldUponMatch) {
+            const verbUpper = botSoldUponMatch[1].toUpperCase();
+            const qtyNum = Math.abs(Number(botSoldUponMatch[2]));
+            const descTkr = botSoldUponMatch[3].toUpperCase();
+            const isSell = (verbUpper === 'SOLD');
+
+            // CUSIP detection: all-digit "ticker" in description → use the
+            // pre-mapped ticker from Schwab Mapping's Ticker column instead.
+            const descTkrIsCusip = /^\d+$/.test(descTkr);
+            const preMappedTkr = (tickerIndex > -1)
+              ? rowArr[tickerIndex].toString().trim().toUpperCase()
+              : '';
+            const tkr = (descTkrIsCusip && preMappedTkr) ? preMappedTkr : descTkr;
+
+            // Entry price: derive from TotalCost ÷ Qty (= strike on assignments).
+            // Schwab stores debits negative for BOT rows; Math.abs() normalises both.
+            const cost = Math.abs(totalCostVal) || 0;
+            const ep = (qtyNum > 0 && cost > 0)
+              ? Math.round((cost / qtyNum) * 10000) / 10000
+              : 0;
+
+            if (actionIdx > -1) rowArr[actionIdx] = isSell ? 'SELL TO CLOSE' : 'BUY TO OPEN';
+            if (tickerIndex > -1) rowArr[tickerIndex] = tkr;
+            if (quantityIndex > -1) rowArr[quantityIndex] = qtyNum;
+            if (signedQuantityIndex > -1) rowArr[signedQuantityIndex] = isSell ? -qtyNum : qtyNum;
+            if (entryPriceIndex > -1) rowArr[entryPriceIndex] = ep;
+            if (totalCostIndex > -1) rowArr[totalCostIndex] = cost;
+            if (strategyTypeIndex > -1) rowArr[strategyTypeIndex] = isSell ? '' : 'LONG STOCK';
+            if (tradeTypeIndex > -1) rowArr[tradeTypeIndex] = 'Stock';
+
+            let infoNote;
+            if (descTkrIsCusip && preMappedTkr) {
+              infoNote = `Description contained CUSIP "${descTkr}" — used pre-mapped ticker "${tkr}" from Schwab Mapping Ticker column. Verify ticker is correct.`;
+            } else if (descTkrIsCusip && !preMappedTkr) {
+              infoNote = `⚠ Description contained CUSIP "${descTkr}" and no pre-mapped ticker was available — CUSIP used as ticker. Fix the Ticker field manually in Import.`;
+            } else {
+              infoNote = isSell
+                ? 'SOLD UPON stock delivery leg parsed. Confirm matching short call assignment or long put exercise RAD row exists on the same Trade Date.'
+                : 'BOT UPON stock acquisition leg parsed. Confirm matching short put assignment or long call exercise RAD row exists on the same Trade Date.';
+            }
+            importIssuesAdd(ctx, 'INFO', r + 2, 'Action',
+              `${isSell ? 'SELL TO CLOSE' : 'BUY TO OPEN'} ${qtyNum} ${tkr} @ ${ep}`,
+              infoNote);
+          }
+        }
+        // ── END BOT / SOLD UPON ───────────────────────────────────────────────
+
+        // Non-RAD rows (EFN, JRN, EXERCISE, ASSIGNMENT, stock BTO, etc.) that
+        // entered this outer block fall through here with no counter change.
+
+        // === DNN Total Cost fix (synthetic exercise stock leg) ================
+        if (totalCostIndex > -1 && entryPriceIndex > -1 && quantityIndex > -1 &&
+          upperDesc.includes('EXERCISE') &&
+          tickerIndex > -1 &&
+          (rowArr[tickerIndex] || '').toString().trim() !== '' &&
+          ((action || '').toString().toUpperCase() === 'BUY TO OPEN' ||
+            (rowArr[actionIdx] || '').toString().toUpperCase().includes('BUY TO OPEN'))) {
+
+          const entryPriceVal = Number(rowArr[entryPriceIndex]) || 0;
+          const qtyVal = Number(rowArr[quantityIndex]) || 0;
+          if (entryPriceVal > 0 && qtyVal > 0) {
+            rowArr[totalCostIndex] = entryPriceVal * qtyVal;
+            if (signedQuantityIndex > -1) rowArr[signedQuantityIndex] = Math.abs(qtyVal);
+          }
+        }
+
+      } // end corporate action block
+
+      // Always clear description column and keep the row
+      if (descriptionColInImport > -1) rowArr[descriptionColInImport] = '';
+      outputData.push(rowArr);
+
+    } // end main for loop
+
+    var finalNumRows = outputData.length;
+
+    // ── POST-LOOP PASS: Forward-fill Strategy Type onto settlement rows ────────
+    // WHY: RAD (option removal) and BOT/SOLD UPON (stock delivery) rows arrive
+    // from Schwab with blank Ticker and blank Strategy Type. The parsers above
+    // correctly populate Ticker, Strike, Expiration, and Call/Put from the
+    // Description field, but they cannot know the original trade's Strategy Type
+    // (PCS, CCS, Long Butterfly, Short IC, etc.) — that information only exists
+    // on the opening legs written earlier in outputData.
+    //
+    // Without Strategy Type on settlement rows, populateStagingWithBlockLogicV3
+    // cannot group them under the same Trade Group ID as the opening legs,
+    // breaking block-level P&L and trade lifecycle tracking.
+    //
+    // ALGORITHM:
+    // 1. Build a lookup map: for each (Account + Ticker) key, track the most
+    //    recent non-blank Strategy Type seen in outputData row order.
+    // 2. Walk outputData a second time. For any row whose Action is RAD or whose
+    //    Description was a BOT/SOLD UPON row (now stored as BUY TO OPEN /
+    //    SELL TO CLOSE with blank Strategy Type AND no Strike/Exp/CP), try to
+    //    fill Strategy Type from the map IF the ticker and account match.
+    // 3. Never overwrite a row that already has Strategy Type populated.
+    // 4. Cluster by exact Trade Time Stamp (not just date) to avoid cross-
+    //    contaminating two different same-day same-ticker trades.
+    //
+    // COLUMN INDICES used: actionIdx, tickerIndex, strategyTypeIndex,
+    // strikeIndex, expIndex, cpIndex, accountIdx (all hoisted above the loop).
+    // ──────────────────────────────────────────────────────────────────────────
+
+    // We need the accountIdx in Import headers — hoist it if not already present.
+    // (It was hoisted above the main loop as part of the standard set.)
+    // Build a forward-fill strategy map keyed by "account|ticker".
+    // Value = the most recent Strategy Type seen for that key.
+    const strategyFillMap = {};
+
+    // FIRST SUB-PASS: collect Strategy Types from opening/closing trade rows.
+    // ---- FIXED CODE ----
+    // Key includes OptionExpiration so NVDA Short IC (exp 5/26/23) never
+    // collides with a NVDA Long Put at any other expiration.
+    // Multi-leg spreads share the same expiration on all legs, so all legs
+    // produce the same key and write the same Strategy Type — no conflict.
+    const openingActions = ['BUY TO OPEN', 'SELL TO OPEN', 'BUY TO CLOSE', 'SELL TO CLOSE'];
+    const acctIdxFill = importHeaders.findIndex(h => h.trim().toLowerCase() === 'account');
+    const tsIdxFill = importHeaders.findIndex(h => h.trim().toLowerCase() === 'trade time stamp');
+    const expIdxFill = expIndex; // already hoisted above the main loop
+
+    function makeStrategyKey(acct, ticker, exp) {
+      // Normalize expiration to a consistent string key (ms timestamp or blank)
+      const expKey = (exp instanceof Date && !isNaN(exp)) ? exp.getTime().toString() : String(exp).trim();
+      return acct + '|' + ticker + '|' + expKey;
+    }
+
+    for (let fi = 0; fi < outputData.length; fi++) {
+      const fRow = outputData[fi];
+      const fAction = (actionIdx !== -1) ? fRow[actionIdx].toString().trim().toUpperCase() : '';
+      const fTicker = (tickerIndex !== -1) ? fRow[tickerIndex].toString().trim().toUpperCase() : '';
+      const fStrategy = (strategyTypeIndex !== -1) ? fRow[strategyTypeIndex].toString().trim().toUpperCase() : '';
+      const fAcct = (acctIdxFill !== -1) ? fRow[acctIdxFill].toString().trim().toUpperCase() : '';
+      const fExp = (expIdxFill !== -1) ? fRow[expIdxFill] : '';
+      if (fTicker && fStrategy && openingActions.includes(fAction)) {
+        const key = makeStrategyKey(fAcct, fTicker, fExp);
+        strategyFillMap[key] = fStrategy;
+      }
+    }
+
+    // SECOND SUB-PASS: fill blank Strategy Type on settlement rows.
+    // ---- FIXED CODE ----
+    // Uses expiration-scoped key (matching the first sub-pass) so a RAD row
+    // for NVDA C 330 5/26/23 maps to SHORT IC, not to a Long Put on a
+    // different NVDA expiration anywhere else in the dataset.
+    // For stock delivery legs (BOT/SOLD UPON, no expiration), fall back to
+    // the ticker-only key so those rows still get filled.
+    const settlementActions = ['RAD', 'EXP'];
+    for (let si = 0; si < outputData.length; si++) {
+      const sRow = outputData[si];
+      const sAction = (actionIdx !== -1) ? sRow[actionIdx].toString().trim().toUpperCase() : '';
+      const sTicker = (tickerIndex !== -1) ? sRow[tickerIndex].toString().trim().toUpperCase() : '';
+      const sStrategy = (strategyTypeIndex !== -1) ? sRow[strategyTypeIndex].toString().trim() : '';
+      const sAcct = (acctIdxFill !== -1) ? sRow[acctIdxFill].toString().trim().toUpperCase() : '';
+      const sStrike = (strikeIndex !== -1) ? sRow[strikeIndex] : '';
+      const sExp = (expIndex !== -1) ? sRow[expIndex] : '';
+      const sCp = (cpIndex !== -1) ? sRow[cpIndex].toString().trim() : '';
+
+      // Never overwrite a row that already has Strategy Type
+      if (sStrategy) continue;
+      // Never fill blank-ticker rows (JRN, EFN, DOI, etc.)
+      if (!sTicker) continue;
+
+      const isSettlementAction = settlementActions.includes(sAction);
+      // Stock delivery leg: BUY TO OPEN or SELL TO CLOSE with no option fields
+      const isStockDeliveryLeg = (sAction === 'BUY TO OPEN' || sAction === 'SELL TO CLOSE') &&
+        !sStrike && !sExp && !sCp;
+      if (!isSettlementAction && !isStockDeliveryLeg) continue;
+
+      // Primary lookup: expiration-scoped key (handles option RAD/EXP rows)
+      let fillStrategy = strategyFillMap[makeStrategyKey(sAcct, sTicker, sExp)];
+
+      // Fallback: ticker-only key for stock delivery legs (no expiration on the row)
+      // Also covers edge cases where the expiration key didn't match but ticker does.
+      if (!fillStrategy) {
+        // Build a ticker-only fallback from the map by scanning all keys for this acct+ticker prefix.
+        // We pick the entry whose expiration is closest (or the only one if there's just one).
+        const prefix = sAcct + '|' + sTicker + '|';
+        const candidates = Object.keys(strategyFillMap).filter(k => k.startsWith(prefix));
+        if (candidates.length === 1) {
+          fillStrategy = strategyFillMap[candidates[0]];
+        } else if (candidates.length > 1 && isStockDeliveryLeg) {
+          // For stock delivery legs we can't match by expiration — just take the most recent
+          // (last key in insertion order; JS objects preserve insertion order for string keys).
+          fillStrategy = strategyFillMap[candidates[candidates.length - 1]];
+        }
+        // If multiple candidates and NOT a stock delivery leg, leave blank (ambiguous — safer than wrong).
+      }
+
+      if (fillStrategy) {
+        outputData[si][strategyTypeIndex] = fillStrategy;
+        importIssuesAdd(ctx, 'INFO', si + 4, 'Strategy Type', fillStrategy,
+          `Strategy Type forward-filled (exp-scoped) → ${sAction} settlement row for ${sTicker}`);
+      }
+    }
+    // ── END POST-LOOP PASS ────────────────────────────────────────────────────
+
+    // === SAFE CLEAR of Import before writing ===
+    var lastImportRow = importSheet.getLastRow();
+    if (lastImportRow >= 4) {
+      importSheet.getRange(4, 1, lastImportRow - 3, importHeaders.length).clearContent();
+    }
+
+    // Paste output
+    importSheet.getRange(4, 1, finalNumRows, importHeaders.length).setValues(outputData);
+
+    // ── CTX: finalize metrics ──────────────────────────────────────────────
+    importIssuesSetMetric(ctx, 'RowsWrittenExclHeader', finalNumRows);
+    importIssuesSetMetric(ctx, 'RowsSkipped', skippedCount);
+    importIssuesSetMetric(ctx, 'RADRowsParsed', radParsed);
+    importIssuesSetMetric(ctx, 'RADParseFailures', radFailed);
+    importIssuesSetMetric(ctx, 'TickerNormalizations', tickerNorms);
+    importIssuesSetMetric(ctx, 'Success', '1');
+    // ────────────────────────────────────────────────────────────────────────
+
+    // Generic post-run check for Google server-side date rendering gaps.
+    checkMissingDateTimeAndAlert(importSheet, 4, 'copyMappingToImportByHeaders');
+
+    SpreadsheetApp.getUi().alert(
+      finalNumRows + ' rows copied from Schwab Mapping to Import.'
+    );
+
+  } catch (e) {
+    // ── PRIORITY 1: Crash handler — log error metrics then re-throw ─────────
+    // WHY: Re-throwing lets refreshAllScripts() catch it for its own alert.
+    // The finally block below guarantees the flush happens either way.
+    importIssuesSetMetric(ctx, 'Success', '0');
+    importIssuesSetMetric(ctx, 'ErrorMessage', e.message);
+    importIssuesSetMetric(ctx, 'ErrorStack', (e.stack || '').substring(0, 500));
+    throw e;
+
+  } finally {
+    // ── PRIORITY 1: ALWAYS flush — even on throw ─────────────────────────
+    // This was the original bug: stagingIssuesFlush(ctx) only ran at the end
+    // of the try block, so any crash produced a blank Staging Issues row.
+    // Moving it here guarantees you always get a log entry for this step.
+    stagingIssuesFlush(ctx);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: Robust timestamp parser with fallback
+// Placed here at the top so it's easy to find and share with other functions.
+//
+// PRIORITY 2 FIX (parseTradeTimeStamp): The old split(':') call silently broke
+// when Trade Time was stored as "HHmm" (e.g. "0932") instead of "HH:mm"
+// ("09:32").  mapSchwabImportByHeadersV3 formats Trade Time as "HHmm" with no
+// colon, so any row that needed the fallback path got hours=932 and minutes=NaN,
+// producing a wildly wrong or null timestamp.
+// The new parser handles both "HH:mm" and "HHmm", plus an optional seconds
+// component ("HH:mm:ss" or "HHmmss") so future Schwab format changes won't
+// silently break anything.
+// ─────────────────────────────────────────────────────────────────────────────
+function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
+  let fullTimestamp = null;
+
+  // Try Trade Time Stamp first (primary path — should always be present)
+  if (tsVal) {
+    fullTimestamp = (tsVal instanceof Date) ? tsVal : new Date(tsVal);
+    if (isNaN(fullTimestamp.getTime())) {
+      fullTimestamp = new Date(tsVal.toString().replace(/-/g, '/'));
+    }
+  }
+
+  // FALLBACK: build from Trade Date + Trade Time when Trade Time Stamp is
+  // missing or unparseable (fixes DT rows that arrive without a full timestamp)
+  if (!fullTimestamp || isNaN(fullTimestamp.getTime())) {
+    if (tradeDateVal && tradeTimeVal) {
+      let baseDate = (tradeDateVal instanceof Date) ? tradeDateVal : new Date(tradeDateVal);
+      if (!isNaN(baseDate.getTime())) {
+        const timeStr = tradeTimeVal.toString().trim();
+        let hours, minutes, seconds;
+
+        if (timeStr.includes(':')) {
+          // Format "HH:mm" or "HH:mm:ss"
+          const parts = timeStr.split(':').map(Number);
+          [hours, minutes, seconds = 0] = parts;
+        } else if (timeStr.length >= 4) {
+          // Format "HHmm" or "HHmmss" — no colon (Schwab Mapping output format)
+          hours = Number(timeStr.substring(0, 2));
+          minutes = Number(timeStr.substring(2, 4));
+          seconds = timeStr.length >= 6 ? Number(timeStr.substring(4, 6)) : 0;
+        } else {
+          hours = NaN; minutes = NaN; seconds = 0;
+        }
+
+        if (!isNaN(hours) && !isNaN(minutes)) {
+          fullTimestamp = new Date(
+            baseDate.getFullYear(),
+            baseDate.getMonth(),
+            baseDate.getDate(),
+            hours,
+            minutes,
+            seconds || 0
+          );
+        }
+      }
+    }
+  }
+
+  return fullTimestamp && !isNaN(fullTimestamp.getTime()) ? fullTimestamp : null;
+}
+
+/**
+ * validateAndCleanImportToHelperV3
+ * Runs right after copyMappingToImportByHeaders().
+ *
+ * WHY: Makes data 100% pristine AND derives clean Trade Date / Trade Time from
+ * the authoritative Trade Time Stamp in BOTH Import and Helper.
+ *
+ * Changes in this version (5/3/2026):
+ *   PRIORITY 1 — try/catch/finally wrapper so Staging Issues is ALWAYS flushed
+ *                even on a mid-function crash.
+ *   PRIORITY 2 — All importHeaders.indexOf() calls hoisted above the row loop.
+ *                The old code re-ran ~12 header searches on every single row
+ *                (45,000+ redundant ops on a full DT import).
+ *   PRIORITY 2 — parseTradeTimeStamp now handles "HHmm" (no colon) as well as
+ *                "HH:mm", matching the format written by mapSchwabImportByHeadersV3.
+ */
+function validateAndCleanImportToHelperV3() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const importSheet = ss.getSheetByName('Import');
+  const helperSheet = ss.getSheetByName('Helper');
+  if (!importSheet || !helperSheet) throw new Error('Import or Helper sheet not found!');
+
+  // ── Staging Issues CTX ─────────────────────────────────────────────────────
+  const ctx = stagingIssuesStart('validateAndCleanImportToHelperV3');
+  importIssuesSetMetric(ctx, 'SourceSheet', 'Import');
+  importIssuesSetMetric(ctx, 'DestSheet', 'Helper');
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // ── PRIORITY 1: try/catch/finally so Issues log ALWAYS gets flushed ────────
+  // WHY: Without this wrapper, any mid-function throw (sheet missing, bad data,
+  // regex error, Sheets API limit) exits silently and leaves ZERO log output in
+  // Staging Issues for this step — the worst time to have no diagnostics.
+  // The finally block guarantees stagingIssuesFlush(ctx) runs even on crash.
+  try {
+
+    // 1. Read Import data (starts at row 4)
+    const importData = importSheet.getRange(
+      4, 1,
+      importSheet.getLastRow() - 3,
+      importSheet.getLastColumn()
+    ).getValues();
+
+    importIssuesSetMetric(ctx, 'SourceRowsReadExclHeader', importData.length);
+    let tickerNormCount = 0;
+
+    // ── Raw importHeaders array (lowercase-trimmed for indexOf matching) ──────
+    const importHeaders = importSheet
+      .getRange(1, 1, 1, importSheet.getLastColumn())
+      .getValues()[0]
+      .map(h => h.trim().toLowerCase());
+
+    // ── PRIORITY 2: Hoist ALL header index lookups ABOVE the row loop ─────────
+    // WHY: importHeaders never changes between rows. Calling indexOf() inside the
+    // loop ran every search on every row (12 searches × 15,000 DT rows = 180,000
+    // redundant string comparisons per pipeline run). Hoisted once here = zero
+    // redundancy. Also eliminates any risk of a typo on one pass vs another.
+    const tsIdx = importHeaders.indexOf('trade time stamp');
+    const dateIdx = importHeaders.indexOf('trade date');
+    const timeIdx = importHeaders.indexOf('trade time');
+    const tickerIdx = importHeaders.indexOf('ticker');
+    const strategyTypeIdx = importHeaders.indexOf('strategy type');
+    const tradeTypeIdx = importHeaders.indexOf('trade type');
+    const signedQuantityIdx = importHeaders.indexOf('signed quantity');
+    const quantityIdx = importHeaders.indexOf('quantity');
+    const actionIdx = importHeaders.indexOf('action');
+    const entryPriceIdx = importHeaders.indexOf('entry price');
+    const optionContractIdx = importHeaders.indexOf('option contract');
+    const strikeOCIdx = importHeaders.indexOf('option strike');
+    const expOCIdx = importHeaders.indexOf('option expiration');
+    const cpOCIdx = importHeaders.indexOf('call/put');
+    const accountIdx = importHeaders.indexOf('account');
+    const corpActionsIdx = importHeaders.indexOf('corporate actions');
+    const accountActionsIdx = importHeaders.indexOf('account actions');
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Also need the uppercase-target column indices (used in the forEach below)
+    // Hoisted here so the forEach doesn't re-search importHeaders each iteration.
+    const uppercaseTextColumns = ['Account', 'Ticker', 'Action', 'Trade Type', 'Call/Put', 'Strategy Type'];
+    const uppercaseColIndices = uppercaseTextColumns.map(
+      colName => importHeaders.indexOf(colName.toLowerCase())
+    );
+
+    // 2. Make sure Trade Time Stamp column exists on Helper
+    const helperHeaders = helperSheet.getRange(1, 1, 1, helperSheet.getLastColumn()).getValues()[0];
+    let tsCol = helperHeaders.findIndex(h => h.toString().trim().toLowerCase() === 'trade time stamp') + 1;
+    if (tsCol === 0) {
+      helperSheet.getRange(1, helperSheet.getLastColumn() + 1).setValue('Trade Time Stamp');
+      tsCol = helperSheet.getLastColumn();
+    }
+
+    let outputRows = [];
+    let errors = [];
+    const errorSheet = ensureValidationErrorSheet();
+    const nonTradeActions = ['EFN', 'RAD', 'JRN', 'DOI', 'EXP', 'CRC', 'CDB'];
+
+    // === CLEAR OLD ERRORS ===
+    if (errorSheet.getLastRow() > 1) {
+      errorSheet.getRange(2, 1, errorSheet.getLastRow() - 1, errorSheet.getLastColumn()).clearContent();
+    }
+
+    // ── TIMEZONE: resolved once here so Utilities.formatDate doesn't need to
+    // call ss.getSpreadsheetTimeZone() on every row (minor but free win).
+    const tz = ss.getSpreadsheetTimeZone();
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MAIN ROW LOOP
+    // All header index lookups use the hoisted constants above — never indexOf
+    // inside the loop body.
+    // ─────────────────────────────────────────────────────────────────────────
+    for (let r = 0; r < importData.length; r++) {
+      const row = importData[r];
+      let cleanRow = [...row];
+      let errorMsg = '';
+
+      // ── 1. TIMESTAMP: derive from authoritative Trade Time Stamp (with fallback) ──
+      // Uses the hoisted tsIdx / dateIdx / timeIdx (no indexOf in the loop).
+      let fullTimestamp = null;
+      if (tsIdx > -1) {
+        const tsVal = row[tsIdx];
+        const dateVal = (dateIdx > -1) ? row[dateIdx] : null;
+        const timeVal = (timeIdx > -1) ? row[timeIdx] : null;
+
+        fullTimestamp = parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
+
+        if (fullTimestamp) {
+          cleanRow[tsIdx] = fullTimestamp;
+          const derivedDate = new Date(
+            fullTimestamp.getFullYear(),
+            fullTimestamp.getMonth(),
+            fullTimestamp.getDate()
+          );
+          const derivedTime = Utilities.formatDate(fullTimestamp, tz, 'HH:mm');
+          if (dateIdx > -1) cleanRow[dateIdx] = derivedDate;
+          if (timeIdx > -1) cleanRow[timeIdx] = derivedTime;
+        } else {
+          errorMsg = 'Invalid Trade Time Stamp';
+        }
+      }
+
+      // ── 2. TRADE TYPE: derive here so Helper is the canonical pristine source ──
+      // WHY: A blank Strategy Type must produce a blank Trade Type, not 'Option'.
+      // Schwab settlement rows (stock exercise/assignment legs, EXP cash rows) arrive
+      // with blank Strategy Type — defaulting them to 'Option' caused those rows to
+      // fail the option field validation check (no Strike/Exp/CP on a stock row).
+      // Rule: blank Ticker OR blank Strategy Type → blank Trade Type.
+      // Only rows with an explicit Strategy Type keyword get a derived Trade Type.
+      if (tickerIdx > -1 && strategyTypeIdx > -1 && tradeTypeIdx > -1) {
+        const ticker = (row[tickerIdx] || '').toString().trim().toUpperCase();
+        const strategyType = (row[strategyTypeIdx] || '').toString().trim().toUpperCase();
+        if (ticker && strategyType) {
+          let tradeType = 'Option';
+
+          // A row with no Strike AND no Expiration is a stock row, full stop.
+          // Catches settlement stock-delivery legs whose Strategy Type was forward-filled
+          // from the parent spread (e.g. SHORT IC) which would otherwise derive 'Option'.
+          const hasNoOptionFields = !cleanRow[strikeOCIdx] && !cleanRow[expOCIdx];
+          if (hasNoOptionFields || strategyType.includes('STOCK')) tradeType = 'Stock';
+          else if (strategyType.includes('PCS') || strategyType.includes('PDS') ||
+            strategyType.includes('CCS') || strategyType.includes('CDS') ||
+            strategyType.includes('BUTTERFLY') || strategyType.includes('IRON CONDOR')) tradeType = 'Spread';
+
+          cleanRow[tradeTypeIdx] = tradeType;
+        } else {
+          cleanRow[tradeTypeIdx] = '';
+        }
+      }
+
+      // ── 2B. CORPORATE ACTION CANONICALIZATION ──────────────────────────
+      // WHY: SYMBOL CHANGE and SPLIT rows may legally survive validation even
+      // with sparse upstream fields, but Helper should still classify them as
+      // stock-lineage rows so Staging does not have to guess.
+      const corpActionVal = (corpActionsIdx > -1 ? cleanRow[corpActionsIdx] : '')
+        .toString().trim().toUpperCase();
+      const cleanActionVal = (actionIdx > -1 ? cleanRow[actionIdx] : '')
+        .toString().trim().toUpperCase();
+      const cleanTickerVal = (tickerIdx > -1 ? cleanRow[tickerIdx] : '')
+        .toString().trim().toUpperCase();
+
+      if (
+        cleanTickerVal &&
+        (
+          corpActionVal === 'SYMBOL CHANGE' ||
+          corpActionVal === 'SPLIT' ||
+          cleanActionVal === 'SYMBOL CHANGE' ||
+          cleanActionVal === 'SPLIT'
+        )
+      ) {
+        if (tradeTypeIdx > -1) cleanRow[tradeTypeIdx] = 'Stock';
+        if (strategyTypeIdx > -1 && !String(cleanRow[strategyTypeIdx] || '').trim()) {
+          cleanRow[strategyTypeIdx] = 'LONG STOCK';
+        }
+      }
+
+      // ── 3. UPPERCASE text columns ─────────────────────────────────────────
+      // Uses pre-computed uppercaseColIndices array — no inner indexOf call.
+      for (let u = 0; u < uppercaseColIndices.length; u++) {
+        const idx = uppercaseColIndices[u];
+        if (idx > -1) {
+          cleanRow[idx] = (cleanRow[idx] || '').toString().trim().toUpperCase();
+        }
+      }
+
+      // ── 4. TICKER NORMALIZATION: strip Schwab alternate index prefixes ─────
+      // "$SPX.X" → "SPX" | "$NDX.X" → "NDX" | "SPY" → "SPY" (no change).
+      // Uses hoisted tickerIdx.
+      if (tickerIdx > -1) {
+        const tkrRaw = (cleanRow[tickerIdx] || '').toString().trim().toUpperCase();
+        const tkrNormalized = tkrRaw.replace(/^\$/, '').replace(/\.[A-Z]+$/, '');
+        if (tkrNormalized !== tkrRaw) {
+          tickerNormCount++;
+          cleanRow[tickerIdx] = tkrNormalized;
+          // Uncomment the line below only for debugging a specific normalization issue:
+          // importIssuesAdd(ctx, 'INFO', r + 4, 'Ticker', `${tkrRaw} → ${tkrNormalized}`, 'Ticker normalized from Schwab alternate index symbol');
+        }
+      }
+
+      // ── 5. SIGNED QUANTITY ────────────────────────────────────────────────
+      // Uses hoisted signedQuantityIdx / quantityIdx / actionIdx.
+      if (signedQuantityIdx > -1 && quantityIdx > -1 && actionIdx > -1) {
+        const qtyVal = Number(row[quantityIdx]);
+        const actionVal = (row[actionIdx] || '').toString().toUpperCase().trim();
+        cleanRow[signedQuantityIdx] = !isNaN(qtyVal)
+          ? (actionVal.includes('SELL') ? -1 * qtyVal : qtyVal)
+          : '';
+      }
+
+      // ── 6. QUANTITY validation ────────────────────────────────────────────
+      // Uses hoisted quantityIdx.
+      if (quantityIdx > -1) {
+        const valNum = Number(row[quantityIdx]);
+        cleanRow[quantityIdx] = !isNaN(valNum)
+          ? valNum
+          : (row[quantityIdx] ? '❌ INVALID QTY' : '');
+      }
+
+      // ── 7. ENTRY PRICE validation ─────────────────────────────────────────
+      // Uses hoisted entryPriceIdx.
+      if (entryPriceIdx > -1) {
+        const valNum = Number(row[entryPriceIdx]);
+        cleanRow[entryPriceIdx] = !isNaN(valNum)
+          ? valNum
+          : (row[entryPriceIdx] ? '❌ INVALID PRICE' : '');
+      }
+
+      // ── 8. OPTION CONTRACT: standardize to OCC format ────────────────────
+      // Uses hoisted optionContractIdx / tickerIdx (reused) / strikeOCIdx /
+      // expOCIdx / cpOCIdx.
+      if (optionContractIdx > -1 && tickerIdx > -1 &&
+        strikeOCIdx > -1 && expOCIdx > -1 && cpOCIdx > -1) {
+        const ocTicker = (row[tickerIdx] || '').toString().toUpperCase().trim();
+        const strike = Number(row[strikeOCIdx]);
+        const exp = row[expOCIdx];
+        let cp = (row[cpOCIdx] || '').toString().toUpperCase().trim();
+        if (cp === 'CALL') cp = 'C';
+        if (cp === 'PUT') cp = 'P';
+
+        let expDatePart = '';
+        if (exp) {
+          if (exp instanceof Date) {
+            const yy = String(exp.getFullYear()).slice(-2);
+            const mm = String(exp.getMonth() + 1).padStart(2, '0');
+            const dd = String(exp.getDate()).padStart(2, '0');
+            expDatePart = yy + mm + dd;
+          } else {
+            const expStr = exp.toString().trim();
+            const dateMatch = expStr.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+            if (dateMatch) {
+              expDatePart = dateMatch[3].slice(-2) + dateMatch[1] + dateMatch[2];
+            } else if (expStr.length === 8 && /^\d{8}$/.test(expStr)) {
+              expDatePart = expStr.slice(2);
+            }
+          }
+        }
+
+        const strikePart = !isNaN(strike)
+          ? String(Math.round(strike * 1000)).padStart(8, '0')
+          : '';
+
+        if (ocTicker && expDatePart && (cp === 'C' || cp === 'P') && strikePart) {
+          cleanRow[optionContractIdx] =
+            ocTicker.replace(/[^A-Z]/g, '') + expDatePart + cp + strikePart;
+        }
+      }
+
+      // ── 9. VALIDATION RULES ───────────────────────────────────────────────
+      // Uses hoisted actionIdx / accountIdx / tickerIdx / quantityIdx /
+      // tradeTypeIdx / strikeOCIdx / expOCIdx / cpOCIdx /
+      // corpActionsIdx / accountActionsIdx.
+      const actionRaw = (row[actionIdx] || '').toString().trim().toUpperCase();
+      const isTradeRow = ['BUY TO OPEN', 'SELL TO OPEN', 'BUY TO CLOSE', 'SELL TO CLOSE']
+        .includes(actionRaw);
+
+      const acct = (accountIdx > -1 ? row[accountIdx] : '')
+        .toString().trim().toUpperCase();
+      if (acct !== 'DT' && acct !== 'LT') errorMsg = 'Account must be DT or LT';
+
+      const tickerVal = (tickerIdx > -1 ? row[tickerIdx] : '').toString().trim().toUpperCase();
+      if (isTradeRow && !tickerVal) errorMsg = 'Ticker required for trade actions';
+
+      const qtyCheck = Number(quantityIdx > -1 ? row[quantityIdx] : '');
+      if (isTradeRow && isNaN(qtyCheck)) errorMsg = 'Quantity must be a number';
+
+      // --- AFTER ---
+      // WHY: Read tradeTypeCheck from cleanRow (not raw row) because Trade Type
+      // is derived in Step 2 above and written to cleanRow — the raw row[tradeTypeIdx]
+      // may be blank (first run) or a prior-run value (subsequent runs), both of
+      // which cause incorrect validation behaviour. Also read strike/exp/cp from
+      // cleanRow so Step 8 normalizations are visible here.
+      // WHY: Wrap in !nonTradeActions guard so RAD, JRN, EFN etc. never reach the
+      // option field check — they legitimately have no Strike/Exp/C-P requirement.
+      const tradeTypeCheck = (tradeTypeIdx > -1 ? cleanRow[tradeTypeIdx] : '')
+        .toString().trim().toUpperCase();
+      if (!nonTradeActions.includes(actionRaw) &&
+        (tradeTypeCheck.includes('OPTION') || tradeTypeCheck.includes('SPREAD'))) {
+        if (!(strikeOCIdx > -1 && cleanRow[strikeOCIdx]) ||
+          !(expOCIdx > -1 && cleanRow[expOCIdx]) ||
+          !(cpOCIdx > -1 && cleanRow[cpOCIdx])) {
+          errorMsg = 'Options need Strike, Expiration, Call/Put';
+        }
+      }
+
+      // Corporate / ledger rows clear any validation error — they don't need
+      // Ticker, Quantity, or option fields.
+      const corpAction = (corpActionsIdx > -1) ? row[corpActionsIdx] : '';
+      const accountAction = (accountActionsIdx > -1) ? row[accountActionsIdx] : '';
+      if (corpAction || accountAction || nonTradeActions.includes(actionRaw)) {
+        errorMsg = '';
+      }
+
+      if (errorMsg) {
+        errors.push([r + 4, 'Action/Ticker', errorMsg, 'Fix in Import sheet and re-run']);
+        importIssuesAdd(ctx, 'ERROR', r + 4, 'Action/Ticker', errorMsg,
+          'Row excluded from Helper — fix in Import and re-run');
+      } else {
+        outputRows.push(cleanRow);
+      }
+
+    } // end main row loop
+
+    // ── SAFE CLEAR both sheets before writing ─────────────────────────────────
+    // WHY: If the previous run wrote more rows than this run, stale rows at the
+    // bottom would silently flow into Staging on the next block-logic pass.
+    const helperLastRow = helperSheet.getLastRow();
+    if (helperLastRow >= 4) {
+      helperSheet.getRange(4, 1, helperLastRow - 3, helperSheet.getLastColumn()).clearContent();
+    }
+    const importLastRow = importSheet.getLastRow();
+    if (importLastRow >= 4) {
+      importSheet.getRange(4, 1, importLastRow - 3, importSheet.getLastColumn()).clearContent();
+    }
+
+    // Write clean rows to both Helper and Import
+    if (outputRows.length > 0) {
+      helperSheet.getRange(4, 1, outputRows.length, importData[0].length).setValues(outputRows);
+      importSheet.getRange(4, 1, outputRows.length, importData[0].length).setValues(outputRows);
+    }
+
+    // === FORCE CORRECT DISPLAY FORMATS ON BOTH SHEETS ===
+    if (outputRows.length > 0) {
+      const tsColNum = tsIdx + 1;
+      const timeColNum = timeIdx + 1;
+      importSheet.getRange(4, tsColNum, outputRows.length, 1).setNumberFormat('M/d/yyyy HH:mm');
+      importSheet.getRange(4, timeColNum, outputRows.length, 1).setNumberFormat('HH:mm');
+      helperSheet.getRange(4, tsCol, outputRows.length, 1).setNumberFormat('M/d/yyyy HH:mm');
+      helperSheet.getRange(4, timeColNum, outputRows.length, 1).setNumberFormat('HH:mm');
+    }
+
+    // Write validation errors to the Validation Errors sheet if any
+    if (errors.length > 0) {
+      errorSheet.getRange(errorSheet.getLastRow() + 1, 1, errors.length, 4).setValues(errors);
+    }
+
+    // ── CTX: finalize metrics ───────────────────────────────────────────────
+    importIssuesSetMetric(ctx, 'RowsWrittenExclHeader', outputRows.length);
+    importIssuesSetMetric(ctx, 'ValidationErrors', errors.length);
+    importIssuesSetMetric(ctx, 'TickerNormalizations', tickerNormCount);
+    importIssuesSetMetric(ctx, 'Success', '1');
+    // ────────────────────────────────────────────────────────────────────────
+
+    // Generic post-run check for Google server-side date rendering gaps.
+    checkMissingDateTimeAndAlert(helperSheet, 4, 'validateAndCleanImportToHelperV3');
+
+    if (errors.length > 0) {
+      SpreadsheetApp.getUi().alert(
+        '⚠️ Validation found ' + errors.length + ' errors — check Validation Errors sheet!'
+      );
+    } else {
+      SpreadsheetApp.getUi().alert(
+        '✅ All data pristine — Import and Helper now have FULL derivations and correct display!'
+      );
+    }
+
+  } catch (e) {
+    // ── PRIORITY 1: Crash handler — log error metrics then re-throw ──────────
+    importIssuesSetMetric(ctx, 'Success', '0');
+    importIssuesSetMetric(ctx, 'ErrorMessage', e.message);
+    importIssuesSetMetric(ctx, 'ErrorStack', (e.stack || '').substring(0, 500));
+    throw e;
+
+  } finally {
+    // ── PRIORITY 1: ALWAYS flush — even on throw ──────────────────────────
+    // The old placement of stagingIssuesFlush(ctx) was at the end of the normal
+    // flow only. Moving it here guarantees a log entry exists for every run,
+    // successful or not.
+    stagingIssuesFlush(ctx);
+  }
+}
+
+// ── LIVE-BLOCK-AWARE SPREAD GROUP RESOLVER ─────────────────────────────────
+// WHY: Sub-pass C uses range-containment to find a Spread Group ID for closing
+// legs. When two sequential spreads share a boundary strike (e.g. 300/310 PDS
+// followed by 310/315 PDS), .find() always returns the first range that
+// contains the strike — which is wrong once the first spread has closed flat.
+//
+// This function is called INSIDE the main block loop (Step 4) where `blocks`
+// already holds a live running unit count. It picks the spread group whose
+// block currently has unit > 0 among all candidates, resolving the ambiguity.
+//
+// Falls back to the first candidate (original behavior) only when no candidate
+// has open units — which should not happen in a clean dataset but is safe.
+//
+// PARAMETERS:
+//   acct           — "DT" or "LT"
+//   ticker         — e.g. "QQQ"
+//   expStr         — yyyy-MM-dd string
+//   strat          — Strategy Type uppercase, e.g. "PDS"
+//   strike         — numeric option strike
+//   spreadRangeMap — the range map built in Sub-pass B
+//   blocks         — the live block-state object from Step 4 (passed by reference)
+// ─────────────────────────────────────────────────────────────────────────────
+function resolveLiveSpreadGroupId(acct, ticker, expStr, strat, strike, spreadRangeMap, blocks) {
+  const rangeKey = `${acct}|${ticker}|${expStr}|${strat}`;
+  const rangeGroups = (spreadRangeMap[rangeKey] || []);
+  const candidates = rangeGroups.filter(g => strike >= g.min && strike <= g.max);
+
+  if (candidates.length === 0) return '';
+  if (candidates.length === 1) return candidates[0].groupId;
+
+  // Multiple candidates — prefer the one whose block currently has unit > 0.
+  for (const g of candidates) {
+    const blockKey = `${acct}|${g.groupId}`;
+    if ((blocks[blockKey] || {}).unit > 0) return g.groupId;
+  }
+
+  // Fallback: first candidate (original behavior; safe for normal trades).
+  return candidates[0].groupId;
+}
+
+// ==================== UPDATED BLOCK LOGIC V3 - FIXED ====================
+/**
+ * populateStagingWithBlockLogicV3
+ *
+ * FIXED: Trade Group ID now increments once per open-to-flat block.
+ * FIXED: RAD "Opt Expired" rows now properly close the block.
+ * FIXED: Sequential same-ticker spreads sharing a boundary strike now resolve
+ *        correctly via resolveLiveSpreadGroupId() in the main block loop.
+ */
+function populateStagingWithBlockLogicV3() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const helperSheet = ss.getSheetByName('Helper');
+  const stagingSheet = ss.getSheetByName('Staging');
+  if (!helperSheet || !stagingSheet) throw new Error('Helper or Staging sheet not found!');
+
+  // ── Staging Issues CTX ─────────────────────────────────────────────────────
+  const ctx = stagingIssuesStart('populateStagingWithBlockLogicV3');
+  importIssuesSetMetric(ctx, 'SourceSheet', 'Helper');
+  importIssuesSetMetric(ctx, 'DestSheet', 'Staging');
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const STRATEGY_ABBREV = {
+    'SHORT IC': 'SIC',
+    'LONG IC': 'LIC',
+    'SHORT PCS': 'PCS',
+    'SHORT PDS': 'PDS',
+    'SHORT CCS': 'CCS',
+    'SHORT CDS': 'CDS',
+    'LONG BUTTERFLY': 'LBF',
+    'SHORT BUTTERFLY': 'SBF',
+    'LONG PUT': 'LP',
+    'SHORT PUT': 'SP',
+    'LONG CALL': 'LC',
+    'SHORT CALL': 'SC',
+    'LONG STOCK': 'LST',
+    'SHORT STOCK': 'SST',
+  };
+  function getStratAbbrev(strategyType) {
+    return STRATEGY_ABBREV[strategyType.trim().toUpperCase()] || 'OTH';
+  }
+  /** 
+    function parseSplitRatioFromNotes(row, colMap) {
+      if (colMap["notes"] === undefined) return null;
+  
+      const notes = String(row[colMap["notes"] - 1] || "").trim().toUpperCase();
+      if (!notes) return null;
+  
+      const m = notes.match(/\b(FORWARD|REVERSE)\s+SPLIT\b.*?\b(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\b/);
+      if (!m) return null;
+  
+      return {
+        splitType: m[1],      // FORWARD or REVERSE
+        numerator: Number(m[2]),
+        denominator: Number(m[3]),
+        rawText: notes
+      };
+    }
+    */
+
+  function parseSymbolChangeFromNotes(row, colMap) {
+    if (colMap['notes'] === undefined) return null;
+
+    const notes = String(row[colMap['notes'] - 1] || '').trim();
+    if (!notes) return null;
+
+    const out = {
+      fromRaw: '',
+      toRaw: '',
+      fromResolved: '',
+      toResolved: '',
+      rawText: notes
+    };
+
+    notes.split('|').forEach(part => {
+      const seg = String(part || '').trim();
+      const eq = seg.indexOf('=');
+      if (eq === -1) return;
+
+      const key = seg.substring(0, eq).trim().toUpperCase();
+      const val = seg.substring(eq + 1).trim().toUpperCase();
+
+      if (key === 'FROM') out.fromRaw = val;
+      if (key === 'TO') out.toRaw = val;
+      if (key === 'FROM_RESOLVED') out.fromResolved = val;
+      if (key === 'TO_RESOLVED') out.toResolved = val;
+    });
+
+    return (out.fromRaw || out.toRaw || out.fromResolved || out.toResolved) ? out : null;
+  }
+
+
+  function parseSplitRatioFromRow(row, colMap) {
+    const notesIdx = colMap['notes'] ? colMap['notes'] - 1 : -1;
+    const text = notesIdx > -1 ? String(row[notesIdx] || '').trim().toUpperCase() : '';
+
+    if (!text || text.indexOf('SPLIT') === -1) return null;
+
+    const ratioMatch = text.match(/\b(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/);
+    const preMatch = text.match(/\bPRE\s*=\s*([-+]?\d+(?:\.\d+)?)/);
+    const postMatch = text.match(/\bPOST\s*=\s*([-+]?\d+(?:\.\d+)?)/);
+
+    const numerator = ratioMatch ? Number(ratioMatch[1]) : NaN;
+    const denominator = ratioMatch ? Number(ratioMatch[2]) : NaN;
+    const preQty = preMatch ? Math.abs(Number(preMatch[1])) : NaN;
+    const postQty = postMatch ? Math.abs(Number(postMatch[1])) : NaN;
+    const splitType = text.includes('REVERSE') ? 'REVERSE' : (text.includes('FORWARD') ? 'FORWARD' : '');
+
+    if (
+      (!isFinite(numerator) || !isFinite(denominator) || denominator === 0) &&
+      !isFinite(preQty) &&
+      !isFinite(postQty)
+    ) {
+      return null;
+    }
+
+    return {
+      numerator: numerator,
+      denominator: denominator,
+      preQty: preQty,
+      postQty: postQty,
+      splitType: splitType,
+      text: text
+    };
+  }
+
+  function computeExpectedPostSplitQty_(preQty, splitInfo) {
+    if (
+      !splitInfo ||
+      !isFinite(preQty) ||
+      !isFinite(splitInfo.numerator) ||
+      !isFinite(splitInfo.denominator) ||
+      splitInfo.denominator === 0
+    ) return NaN;
+
+    const rawPost = Number(preQty) * (Number(splitInfo.numerator) / Number(splitInfo.denominator));
+    const isReverse = splitInfo.splitType === 'REVERSE' || splitInfo.numerator < splitInfo.denominator;
+
+    return isReverse
+      ? Math.floor(rawPost + 1e-9)
+      : Math.round(rawPost * 1e8) / 1e8;
+  }
+
+  function isMatchingSplitRowForBlock_(runningBeforeSplit, splitInfo) {
+    if (!splitInfo) return true;
+
+    if (isFinite(splitInfo.preQty) && Math.abs(splitInfo.preQty - runningBeforeSplit) < 1e-8) {
+      return true;
+    }
+
+    if (isFinite(splitInfo.postQty)) {
+      const expectedPost = computeExpectedPostSplitQty_(runningBeforeSplit, splitInfo);
+      if (isFinite(expectedPost) && Math.abs(splitInfo.postQty - expectedPost) < 1e-8) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function findRenameSourceStockBlockForSplit_(acct, targetTicker, splitInfo, blocks) {
+    if (!splitInfo || !isFinite(splitInfo.postQty)) return null;
+
+    let match = null;
+
+    Object.keys(blocks).forEach(function (blockKey) {
+      if (match) return;
+
+      const parts = blockKey.split('|');
+      if (parts.length !== 2) return; // stock block keys are acct|ticker
+      if (parts[0] !== acct) return;
+
+      const sourceTicker = parts[1];
+      if (!sourceTicker || sourceTicker === targetTicker) return;
+
+      const block = blocks[blockKey];
+      if (!block || !block.positionId) return;
+
+      const preQty = Number(block.runningQty || 0);
+      if (preQty <= 0) return;
+
+      const expectedPost = computeExpectedPostSplitQty_(preQty, splitInfo);
+      if (isFinite(expectedPost) && Math.abs(expectedPost - splitInfo.postQty) < 1e-8) {
+        match = {
+          sourceKey: blockKey,
+          sourceTicker: sourceTicker,
+          block: block,
+          preQty: preQty,
+          expectedPost: expectedPost
+        };
+      }
+    });
+
+    return match;
+  }
+  
+  function isCusipLikeSymbolValue_(val) {
+  const v = String(val || '').trim().toUpperCase();
+  return !!v && /^[A-Z0-9]{9}$/.test(v) && /\d/.test(v);
+}
+
+function resolveSymbolChangeTargetTicker_(fromTicker, toRaw, toResolved, rowTicker) {
+  const from = String(fromTicker || '').trim().toUpperCase();
+  const rowTkr = String(rowTicker || '').trim().toUpperCase();
+
+  const candidates = [
+    String(toResolved || '').trim().toUpperCase(),
+    String(toRaw || '').trim().toUpperCase(),
+    rowTkr
+  ];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    if (!candidate) continue;
+
+    // If the row itself already carries a real new ticker, do not let a
+    // fallback candidate pin us back to the old symbol.
+    if (candidate === from && rowTkr && rowTkr !== from && !isCusipLikeSymbolValue_(rowTkr)) {
+      continue;
+    }
+
+    if (!isCusipLikeSymbolValue_(candidate)) return candidate;
+  }
+
+  return from;
+}
+
+
+  function parseSymbolChangeFromRow(row, colMap) {
+    const notes = colMap['notes'] !== undefined ? String(row[colMap['notes'] - 1]).trim() : '';
+    const corpActions = colMap['corporate actions'] !== undefined
+      ? String(row[colMap['corporate actions'] - 1]).trim().toUpperCase()
+      : '';
+    const action = colMap['action'] !== undefined
+      ? String(row[colMap['action'] - 1]).trim().toUpperCase()
+      : '';
+
+    const isRenameRow =
+      action === 'SYMBOL CHANGE' ||
+      corpActions === 'SYMBOL CHANGE' ||
+      corpActions === 'Symbol Change'.toUpperCase();
+
+    if (!isRenameRow) return null;
+    if (!notes) return null;
+
+    // Expected Notes format from Phase 2:
+    // FROM=ENCUF | TO=EU | FROM_RESOLVED=ENCUF | TO_RESOLVED=EU | RAW=Symbol Change from ENCUF to EU
+    function pull(label) {
+      const m = notes.match(new RegExp(label + '=([^|]+)', 'i'));
+      return m ? String(m[1]).trim().toUpperCase() : '';
+    }
+
+    const fromRaw = pull('FROM');
+    const toRaw = pull('TO');
+    const fromResolved = pull('FROM_RESOLVED');
+    const toResolved = pull('TO_RESOLVED');
+
+    return {
+      fromRaw: fromRaw,
+      toRaw: toRaw,
+      fromResolved: fromResolved,
+      toResolved: toResolved
+    };
+  }
+
+  // ── LIVE-BLOCK-AWARE SPREAD GROUP RESOLVER ─────────────────────────────────
+  // WHY: Sub-pass C uses range-containment to find a Spread Group ID for closing
+  // legs. When two sequential spreads share a boundary strike (e.g. 300/310 PDS
+  // followed by 310/315 PDS), .find() always returns the first range that
+  // contains the strike — which is wrong once the first spread has closed flat.
+  //
+  // This function is called INSIDE the main block loop (Step 4) where `blocks`
+  // already holds a live running unit count. It picks the spread group whose
+  // block currently has unit > 0 among all candidates, resolving the ambiguity.
+  //
+  // Falls back to the first candidate (original behavior) only when no candidate
+  // has open units — which should not happen in a clean dataset but is safe.
+  // ─────────────────────────────────────────────────────────────────────────────
+  function resolveLiveSpreadGroupId(acct, ticker, expStr, strat, strike, spreadRangeMap, blocks) {
+    const rangeKey = `${acct}|${ticker}|${expStr}|${strat}`;
+    const rangeGroups = (spreadRangeMap[rangeKey] || []);
+    const candidates = rangeGroups.filter(g => strike >= g.min && strike <= g.max);
+
+    if (candidates.length === 0) return '';
+    if (candidates.length === 1) return candidates[0].groupId;
+
+    // Multiple candidates — prefer the one whose block currently has unit > 0.
+    for (const g of candidates) {
+      const blockKey = `${acct}|${g.groupId}`;
+      if ((blocks[blockKey] || {}).unit > 0) return g.groupId;
+    }
+
+    // Fallback: first candidate (original behavior; safe for normal trades).
+    return candidates[0].groupId;
+  }
+
+  // ── PRIORITY 1: try/catch/finally so Issues log ALWAYS gets flushed ────────
+  try {
+
+    const helperData = helperSheet.getDataRange().getValues();
+    if (helperData.length < 4) {
+      SpreadsheetApp.getUi().alert('No data in Helper to process.');
+      return;
+    }
+
+    const colMap = {};
+    helperData[0].forEach((h, i) => {
+      if (typeof h === 'string' && h.trim()) colMap[h.trim().toLowerCase()] = i + 1;
+    });
+
+    let data = helperData.slice(3).map(row => row.slice());
+
+    const dataStartRow = 4;
+    const tz = ss.getSpreadsheetTimeZone();
+
+    // ── CTX counters ──────────────────────────────────────────────────────────
+    let ctxStrikeCollisions = 0;
+    let ctxBlocksOpened = 0;
+    let ctxBlocksClosed = 0;
+    let ctxRADRows = 0;
+    let ctxMissingSpreadGroup = 0;
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Step 2: Sort by Account then Trade Time Stamp.
+    const tsIdx = colMap['trade time stamp'] - 1;
+    // WHY the three-level sort:
+    // Level 1 — Account (DT before LT, keeps accounts cleanly separated).
+    // Level 2 — Trade Time Stamp (canonical sequencing key for block logic).
+    // Level 3 — Option Strike ascending (tie-breaker for same-timestamp rows).
+    //   When two legs of a spread share the exact same timestamp (e.g. the final
+    //   BUY TO CLOSE 310 and SELL TO CLOSE 315 both stamped 08/15/2023 8:36),
+    //   JavaScript sort is not guaranteed stable. Without a tie-breaker, the
+    //   SELL TO CLOSE can land before the BUY TO CLOSE, dropping unit to 0
+    //   (blkClose fires), then the BUY TO CLOSE arrives with prevUnit=0 and
+    //   fires blkStart — leaving the block permanently open with unit=-1.
+    //   Sorting lower strike first means the BUY TO CLOSE 310 always processes
+    //   before the SELL TO CLOSE 315, the unit walks down monotonically, and
+    //   blkClose fires correctly on the final leg only.
+    data.sort((a, b) => {
+      const acctA = (a[colMap['account'] - 1] || '').toString().toUpperCase();
+      const acctB = (b[colMap['account'] - 1] || '').toString().toUpperCase();
+      if (acctA !== acctB) return acctA.localeCompare(acctB);
+
+      const tsA = a[tsIdx] instanceof Date ? a[tsIdx].getTime() : 0;
+      const tsB = b[tsIdx] instanceof Date ? b[tsIdx].getTime() : 0;
+      if (tsA !== tsB) return tsA - tsB;
+
+      // Tie-breaker: lower strike first within the same timestamp.
+      const strikeA = Number(a[colMap['option strike'] - 1]) || 0;
+      const strikeB = Number(b[colMap['option strike'] - 1]) || 0;
+      return strikeA - strikeB;
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step 3: Assign Spread Group ID — THREE sub-passes.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const getTsMinute = (tsVal) => {
+      if (!(tsVal instanceof Date) || isNaN(tsVal.getTime())) return 'NO-TS';
+      return Utilities.formatDate(tsVal, tz, 'yyyy-MM-dd HH:mm');
+    };
+
+    // ----- Sub-pass A: Collect opening spread legs and their strikes -----
+    let openGroupStrikesMap = {};
+    let openGroupStrategyMap = {};
+    let openGroupFirstRowMap = {};
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const actionRaw = (row[colMap['action'] - 1] || '').toString().trim().toUpperCase();
+      const strat = (row[colMap['strategy type'] - 1] || '').toString().toUpperCase();
+
+      const isSpreadOpen = (
+        (actionRaw === 'BUY TO OPEN' || actionRaw === 'SELL TO OPEN') &&
+        (strat.includes('PCS') || strat.includes('PDS') ||
+          strat.includes('CCS') || strat.includes('CDS') ||
+          strat.includes('BUTTERFLY') || strat.includes('IRON CONDOR'))
+      );
+      if (!isSpreadOpen) continue;
+
+      const acct = (row[colMap['account'] - 1] || '').toString().toUpperCase();
+      const ticker = (row[colMap['ticker'] - 1] || '').toString().toUpperCase();
+      const exp = row[colMap['option expiration'] - 1];
+      const expStr = exp instanceof Date
+        ? Utilities.formatDate(exp, tz, 'yyyy-MM-dd')
+        : (exp || '').toString();
+      const strike = Number(row[colMap['option strike'] - 1]) || 0;
+      const tsMin = getTsMinute(row[colMap['trade time stamp'] - 1]);
+
+      const groupKey = `${acct}|${ticker}|${expStr}|${strat}|${tsMin}`;
+
+      if (!openGroupStrikesMap[groupKey]) {
+        openGroupStrikesMap[groupKey] = [];
+        openGroupFirstRowMap[groupKey] = i;
+      }
+      if (!openGroupStrategyMap[groupKey]) openGroupStrategyMap[groupKey] = strat;
+      openGroupStrikesMap[groupKey].push(strike);
+    }
+
+    // ----- Sub-pass B: Build spreadKeyMap and spreadRangeMap -----
+    let spreadKeyMap = {};
+    let spreadRangeMap = {};
+
+    for (const [groupKey, strikes] of Object.entries(openGroupStrikesMap)) {
+      const parts = groupKey.split('|');
+      const acctPart = parts[0];
+      const tkrPart = parts[1];
+      const expPart = parts[2];
+      const stratPart = parts[3];
+
+      const unique = [...new Set(strikes)].sort((a, b) => a - b);
+      const strikeMin = unique[0];
+      const strikeMax = unique[unique.length - 1];
+
+      const spreadGroupId = `SPREAD-${tkrPart}-${stratPart}-${expPart}-${strikeMin}-${strikeMax}`;
+      spreadKeyMap[groupKey] = spreadGroupId;
+
+      const rangeKey = `${acctPart}|${tkrPart}|${expPart}|${stratPart}`;
+      if (!spreadRangeMap[rangeKey]) spreadRangeMap[rangeKey] = [];
+      spreadRangeMap[rangeKey].push({ min: strikeMin, max: strikeMax, groupId: spreadGroupId });
+    }
+
+    // ----- Sub-pass C: Stamp Spread Group IDs -----
+    // Opening legs only — closing legs are intentionally deferred to Step 4.
+    const SPREAD_STRAT_TERMS = ['PCS', 'PDS', 'CCS', 'CDS', 'BUTTERFLY', 'IRON CONDOR'];
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const actionRaw = (row[colMap['action'] - 1] || '').toString().trim().toUpperCase();
+      const strat = (row[colMap['strategy type'] - 1] || '').toString().toUpperCase();
+
+      const isSpreadStrategy = SPREAD_STRAT_TERMS.some(t => strat.includes(t));
+      const isRadSpreadExpiration = (
+        actionRaw === 'RAD' &&
+        isSpreadStrategy &&
+        row[colMap['option strike'] - 1] &&
+        row[colMap['option expiration'] - 1]
+      );
+
+      if (!isSpreadStrategy && !isRadSpreadExpiration) continue;
+
+      const acct = (row[colMap['account'] - 1] || '').toString().toUpperCase();
+      const ticker = (row[colMap['ticker'] - 1] || '').toString().toUpperCase();
+      const exp = row[colMap['option expiration'] - 1];
+      const expStr = exp instanceof Date
+        ? Utilities.formatDate(exp, tz, 'yyyy-MM-dd')
+        : (exp || '').toString();
+
+      if (actionRaw === 'BUY TO OPEN' || actionRaw === 'SELL TO OPEN') {
+        // Opening legs: stamp using the timestamp-based group key.
+        const tsMin = getTsMinute(row[colMap['trade time stamp'] - 1]);
+        const groupKey = `${acct}|${ticker}|${expStr}|${strat}|${tsMin}`;
+        if (spreadKeyMap[groupKey]) {
+          row[colMap['spread group id'] - 1] = spreadKeyMap[groupKey];
+        }
+
+      } else {
+        // ── INTENTIONALLY DEFERRED to the main block loop (Step 4). ──────────
+        // WHY: Sub-pass C runs before Step 4, so the live block-unit state does
+        // not exist here yet. When two sequential spreads share a boundary strike
+        // (e.g. 300/310 PDS followed by 310/315 PDS), a static range-containment
+        // lookup always picks the first range — which is wrong once the first
+        // spread has already closed flat. The main block loop uses
+        // resolveLiveSpreadGroupId() which checks which spread group currently
+        // has unit > 0 at the moment the closing row is processed, giving the
+        // correct answer every time.
+        // Leave Spread Group ID blank here — Step 4 will populate it.
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step 4: Main loop — assign all block fields and calculate P&L on close.
+    // ─────────────────────────────────────────────────────────────────────────
+    let blocks = {};
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const acct = (row[colMap['account'] - 1] || '').toString().toUpperCase();
+      const ticker = (row[colMap['ticker'] - 1] || '').toString().toUpperCase();
+      const actionRaw = row[colMap['action'] - 1].toString().trim();
+      const action = actionRaw.toUpperCase();
+
+      // Skip pure ledger rows that have no Ticker.
+      // IMPORTANT:
+      // SYMBOL CHANGE rows are NOT skipped here even if they are JRN-origin rows,
+      // because they need to transfer the live stock block from old ticker -> new ticker.
+      if (['EFN', 'JRN', 'DOI', 'CRC', 'CDB'].includes(action) && action !== 'SYMBOL CHANGE' && !ticker) {
+        row[colMap['position id'] - 1] = '';
+        row[colMap['trade group id'] - 1] = '';
+        continue;
+      }
+
+      // SPECIAL HANDLING FOR SYMBOL CHANGE rows
+// WHY:
+// A stock symbol rename should keep one continuous stock block.
+// If the row itself already carries the real post-change ticker, keep that
+// ticker on the row while inheriting the existing stock block identity.
+if (action === 'SYMBOL CHANGE') {
+  const scInfo = parseSymbolChangeFromRow(row, colMap);
+
+  if (!scInfo) {
+    importIssuesAdd(
+      ctx,
+      'WARN',
+      dataStartRow + i,
+      'Notes',
+      '',
+      'SYMBOL CHANGE row has no parsable FROM/TO info in Notes. Row left unlinked.'
+    );
+    if (colMap['position id'] !== undefined) row[colMap['position id'] - 1] = '';
+    if (colMap['trade group id'] !== undefined) row[colMap['trade group id'] - 1] = '';
+    continue;
+  }
+
+  const fromTicker = String(scInfo.fromResolved || scInfo.fromRaw || '').trim().toUpperCase();
+  const toRaw = String(scInfo.toRaw || '').trim().toUpperCase();
+  const toResolved = String(scInfo.toResolved || '').trim().toUpperCase();
+  const rowTicker = String(row[colMap['ticker'] - 1] || '').trim().toUpperCase();
+
+  const targetTicker = resolveSymbolChangeTargetTicker_(fromTicker, toRaw, toResolved, rowTicker);
+  const displayTickerCandidate = rowTicker || toResolved || toRaw || fromTicker;
+  const outputTicker = !isCusipLikeSymbolValue_(displayTickerCandidate)
+    ? displayTickerCandidate
+    : (targetTicker || fromTicker);
+
+  if (!fromTicker || !outputTicker) {
+    importIssuesAdd(
+      ctx,
+      'WARN',
+      dataStartRow + i,
+      'Ticker',
+      'FROM=' + fromTicker + ' | ROW=' + rowTicker + ' | TO=' + toResolved,
+      'SYMBOL CHANGE row missing usable old/new ticker. Row left unlinked.'
+    );
+    if (colMap['position id'] !== undefined) row[colMap['position id'] - 1] = '';
+    if (colMap['trade group id'] !== undefined) row[colMap['trade group id'] - 1] = '';
+    continue;
+  }
+
+  const oldKey = `${acct}|${fromTicker}`;
+  const oldBlock = blocks[oldKey];
+
+  if (!oldBlock || !oldBlock.positionId) {
+    importIssuesAdd(
+      ctx,
+      'WARN',
+      dataStartRow + i,
+      'Ticker',
+      fromTicker + ' -> ' + outputTicker,
+      'SYMBOL CHANGE row found but no active source stock block exists for old ticker. Row left unlinked.'
+    );
+    if (colMap['position id'] !== undefined) row[colMap['position id'] - 1] = '';
+    if (colMap['trade group id'] !== undefined) row[colMap['trade group id'] - 1] = '';
+    continue;
+  }
+
+  // No usable destination yet: keep the existing source block identity,
+  // but do NOT force the row ticker back to the old symbol if the row already
+  // has a real post-change ticker.
+  if (!targetTicker || targetTicker === fromTicker) {
+    if (colMap['ticker'] !== undefined) row[colMap['ticker'] - 1] = outputTicker;
+    if (colMap['trade group id'] !== undefined) row[colMap['trade group id'] - 1] = oldBlock.tradeGroupId || '';
+    if (colMap['position id'] !== undefined) row[colMap['position id'] - 1] = oldBlock.positionId || '';
+    if (colMap['block number'] !== undefined) row[colMap['block number'] - 1] = oldBlock.block || '';
+    if (colMap['block start flag'] !== undefined) row[colMap['block start flag'] - 1] = 0;
+    if (colMap['block close flag/p&l'] !== undefined) row[colMap['block close flag/p&l'] - 1] = 0;
+    if (colMap['running position quantity'] !== undefined) {
+      row[colMap['running position quantity'] - 1] = Number(oldBlock.runningQty || 0);
+    }
+    if (colMap['trade status'] !== undefined) {
+      row[colMap['trade status'] - 1] = Number(oldBlock.runningQty || 0) === 0 ? 'Closed' : 'Open';
+    }
+
+    importIssuesAdd(
+      ctx,
+      'INFO',
+      dataStartRow + i,
+      'Ticker',
+      fromTicker + ' -> ' + outputTicker,
+      'SYMBOL CHANGE kept the existing stock block identity without opening a new block because no separate destination ticker was yet usable.'
+    );
+    continue;
+  }
+
+  const newKey = `${acct}|${targetTicker}`;
+  const newBlockExisting = blocks[newKey];
+
+  if (newBlockExisting && newBlockExisting.positionId && Number(newBlockExisting.runningQty || 0) !== 0) {
+    importIssuesAdd(
+      ctx,
+      'WARN',
+      dataStartRow + i,
+      'Ticker',
+      fromTicker + ' -> ' + targetTicker,
+      'SYMBOL CHANGE destination ticker already has an active block. Source block was NOT merged automatically.'
+    );
+    if (colMap['position id'] !== undefined) row[colMap['position id'] - 1] = '';
+    if (colMap['trade group id'] !== undefined) row[colMap['trade group id'] - 1] = '';
+    continue;
+  }
+
+  const movedBlock = {
+    unit: Number(oldBlock.unit || 0),
+    block: Number(oldBlock.block || 1),
+    runningQty: Number(oldBlock.runningQty || 0),
+    pnl: Number(oldBlock.pnl || 0),
+    entryCost: Number(oldBlock.entryCost || 0),
+    openTs: oldBlock.openTs || null,
+    positionId: oldBlock.positionId || '',
+    tradeGroupId: oldBlock.tradeGroupId || '',
+    strategyType: oldBlock.strategyType || 'LONG STOCK'
+  };
+
+  blocks[newKey] = movedBlock;
+  delete blocks[oldKey];
+
+  if (colMap['ticker'] !== undefined) row[colMap['ticker'] - 1] = outputTicker;
+  if (colMap['trade group id'] !== undefined) row[colMap['trade group id'] - 1] = movedBlock.tradeGroupId || '';
+  if (colMap['position id'] !== undefined) row[colMap['position id'] - 1] = movedBlock.positionId || '';
+  if (colMap['block number'] !== undefined) row[colMap['block number'] - 1] = movedBlock.block || '';
+  if (colMap['block start flag'] !== undefined) row[colMap['block start flag'] - 1] = 0;
+  if (colMap['block close flag/p&l'] !== undefined) row[colMap['block close flag/p&l'] - 1] = 0;
+  if (colMap['running position quantity'] !== undefined) {
+    row[colMap['running position quantity'] - 1] = Number(movedBlock.runningQty || 0);
+  }
+  if (colMap['trade status'] !== undefined) {
+    row[colMap['trade status'] - 1] = Number(movedBlock.runningQty || 0) === 0 ? 'Closed' : 'Open';
+  }
+
+  importIssuesAdd(
+    ctx,
+    'INFO',
+    dataStartRow + i,
+    'Ticker',
+    fromTicker + ' -> ' + targetTicker + ' | ROW=' + outputTicker,
+    'SYMBOL CHANGE transferred the active stock block to the destination ticker while preserving the row ticker for display and analytics.'
+  );
+  continue;
+}
+// =====================================================================
+// END SYMBOL CHANGE HANDLER
+// =======================================================================
+
+      // NOTE: `spreadId` is `let` — the live resolution block below may reassign it.
+      let spreadId = (row[colMap['spread group id'] - 1] || '').toString();
+      let qty = Number(row[colMap['quantity'] - 1]) || 0;
+      const strategyType = (row[colMap['strategy type'] - 1] || '').toString().toUpperCase();
+
+      let tradeType = (row[colMap['trade type'] - 1] || '').toString().toUpperCase().trim();
+      if (!tradeType && ticker) tradeType = 'OPTION';
+
+      // === LIVE SPREAD GROUP ID RESOLUTION FOR CLOSING/RAD LEGS ================
+      // WHY: Sub-pass C intentionally left closing leg Spread Group IDs blank.
+      // We fill them here using resolveLiveSpreadGroupId(), which checks the live
+      // block unit state to disambiguate boundary-strike collisions between
+      // sequential spreads that share a strike (e.g. 300/310 then 310/315 PDS).
+      // Opening legs already have their Spread Group ID from Sub-pass C — only
+      // blank-spreadId rows with a spread strategy need resolution here.
+      const isSpreadStrategy_ = SPREAD_STRAT_TERMS.some(t => strategyType.includes(t));
+      const isClosingOrRAD = (action.includes('TO CLOSE') || action === 'RAD');
+      if (!spreadId && isSpreadStrategy_ && isClosingOrRAD && ticker) {
+        const exp_ = row[colMap['option expiration'] - 1];
+        const expStr_ = exp_ instanceof Date
+          ? Utilities.formatDate(exp_, tz, 'yyyy-MM-dd')
+          : (exp_ || '').toString();
+        const strike_ = Number(row[colMap['option strike'] - 1]) || 0;
+        if (expStr_ && strike_) {
+          const resolved = resolveLiveSpreadGroupId(
+            acct, ticker, expStr_, strategyType, strike_, spreadRangeMap, blocks
+          );
+          if (resolved) {
+            row[colMap['spread group id'] - 1] = resolved;
+            spreadId = resolved; // local var — used immediately in the grouping key below
+          } else {
+            ctxMissingSpreadGroup++;
+            importIssuesAdd(ctx, 'WARN', dataStartRow + i, 'Spread Group ID',
+              `${acct}|${ticker}|${expStr_}|${strike_}`,
+              'No live spread group found for this closing/RAD row. ' +
+              'Possible cause: no matching open block at this timestamp. ' +
+              'Check that the opening trade exists and processed before this row.');
+          }
+        }
+      }
+      // =========================================================================
+
+      // === GROUPING KEY — Spread Group ID takes priority for ALL rows including RAD ===
+      let key;
+      if (spreadId) {
+        key = `${acct}|${spreadId}`;
+        tradeType = 'SPREAD';
+        row[colMap['trade type'] - 1] = 'SPREAD';
+      } else if (tradeType === 'OPTION') {
+        const exp = row[colMap['option expiration'] - 1];
+        const expStr = exp instanceof Date
+          ? Utilities.formatDate(exp, tz, 'yyyy-MM-dd')
+          : (exp || '').toString();
+        const strike = Number(row[colMap['option strike'] - 1]) || 0;
+        const cp = (row[colMap['call/put'] - 1] || '').toString().toUpperCase()
+          .replace('CALL', 'C').replace('PUT', 'P');
+        key = `${acct}|${ticker}|${expStr}|${strike}|${cp}`;
+      } else {
+        key = `${acct}|${ticker}`;
+      }
+
+      if (!blocks[key]) blocks[key] = {
+        unit: 0,
+        block: 1,
+        runningQty: 0,
+        pnl: 0,
+        entryCost: 0,
+        openTs: null,
+        positionId: '',
+        strategyType: ''
+      };
+
+      // === ROBUST DELTA ===
+      let delta = 0;
+      if (action.includes('SELL TO OPEN') || action.includes('BUY TO OPEN')) delta = 1;
+      if (action.includes('BUY TO CLOSE') || action.includes('SELL TO CLOSE')) delta = -1;
+
+      // === SPECIAL HANDLING FOR RAD "Opt Expired" rows ===
+      if (action === 'RAD' && ticker) {
+        delta = -1;
+        qty = Math.abs(qty);
+
+        row[colMap['entry price'] - 1] = 0;
+        row[colMap['total cost'] - 1] = 0;
+
+        row[colMap['strategy type'] - 1] = blocks[key].strategyType || '';
+
+        let cpRad = (row[colMap['call/put'] - 1] || '').toString().toUpperCase();
+        if (cpRad === 'CALL') row[colMap['call/put'] - 1] = 'C';
+        if (cpRad === 'PUT') row[colMap['call/put'] - 1] = 'P';
+
+        row[colMap['closing date'] - 1] = row[colMap['trade date'] - 1];
+      }
+
+
+      // SPECIAL HANDLING FOR SPLIT rows
+      // SPLIT should adjust the existing stock block in place.
+      // It must NOT open a new block, close a block, or create a new Position ID.
+      if (action === "SPLIT" && ticker) {
+        let existingBlock = blocks[key];
+        const splitInfo = parseSplitRatioFromRow(row, colMap);
+
+        // Rename + split safety net:
+        // If the new ticker has no live block yet, try to find exactly one open stock
+        // block in the same account whose pre-split qty implies this post-split qty.
+        if ((!existingBlock || !existingBlock.positionId) && splitInfo) {
+          const renameSource = findRenameSourceStockBlockForSplit_(acct, ticker, splitInfo, blocks);
+          if (renameSource) {
+            blocks[key] = renameSource.block;
+            delete blocks[renameSource.sourceKey];
+            existingBlock = blocks[key];
+
+            importIssuesAdd(
+              ctx,
+              "INFO",
+              dataStartRow + i,
+              "Ticker",
+              renameSource.sourceTicker + " -> " + ticker,
+              "Inferred SYMBOL CHANGE from split context before applying SPLIT. " +
+              "Matched preQty=" + renameSource.preQty +
+              ", expectedPost=" + renameSource.expectedPost + "."
+            );
+          }
+        }
+
+        if (!existingBlock || !existingBlock.positionId) {
+          importIssuesAdd(
+            ctx,
+            "WARN",
+            dataStartRow + i,
+            "Ticker",
+            ticker,
+            "SPLIT row for " + ticker + " has no active stock block in memory. " +
+            "Split may have occurred before any position was opened, or ticker spelling differs."
+          );
+          continue;
+        }
+
+        const runningBeforeSplit = Number(existingBlock.runningQty || 0);
+
+        // Ignore the broker's duplicate partner row if it does not match the live block.
+        if (!isMatchingSplitRowForBlock_(runningBeforeSplit, splitInfo)) {
+          importIssuesAdd(
+            ctx,
+            "INFO",
+            dataStartRow + i,
+            "Notes",
+            colMap["notes"] ? String(row[colMap["notes"] - 1] || "") : "",
+            "Duplicate/unmatched SPLIT row ignored. It does not match the live pre/post quantity for this block."
+          );
+          continue;
+        }
+
+        let splitDelta = Number(qty || 0);
+
+        if (splitInfo && isFinite(splitInfo.numerator) && isFinite(splitInfo.denominator) && splitInfo.denominator > 0) {
+          const expectedPost = computeExpectedPostSplitQty_(runningBeforeSplit, splitInfo);
+          if (isFinite(expectedPost)) {
+            splitDelta = expectedPost - runningBeforeSplit;
+          }
+        }
+
+        if (!isFinite(splitDelta)) {
+          importIssuesAdd(
+            ctx,
+            "WARN",
+            dataStartRow + i,
+            "Quantity",
+            ticker,
+            "SPLIT row for " + ticker + " has no usable split delta. " +
+            "Check Notes for FORWARD/REVERSE SPLIT ratio text."
+          );
+          continue;
+        }
+
+        existingBlock.runningQty = runningBeforeSplit + splitDelta;
+
+        row[colMap["quantity"] - 1] = splitDelta;
+        if (colMap["signed quantity"] !== undefined) {
+          row[colMap["signed quantity"] - 1] = splitDelta;
+        }
+        row[colMap["running position quantity"] - 1] = existingBlock.runningQty;
+
+        if (colMap["trade group id"] !== undefined) {
+          row[colMap["trade group id"] - 1] = existingBlock.tradeGroupId || row[colMap["trade group id"] - 1] || "";
+        }
+        if (colMap["position id"] !== undefined) {
+          row[colMap["position id"] - 1] = existingBlock.positionId || "";
+        }
+        if (colMap["block number"] !== undefined) {
+          row[colMap["block number"] - 1] = existingBlock.block || "";
+        }
+        if (colMap["block start flag"] !== undefined) {
+          row[colMap["block start flag"] - 1] = 0;
+        }
+        if (colMap["block close flag/p&l"] !== undefined) {
+          row[colMap["block close flag/p&l"] - 1] = 0;
+        }
+        if (colMap["trade status"] !== undefined) {
+          row[colMap["trade status"] - 1] = existingBlock.runningQty === 0 ? "Closed" : "Open";
+        }
+
+        continue;
+      }
+      // END SPLIT HANDLER
+
+      const prevUnit = Number(blocks[key].unit || 0);
+      const prevRunningQty = Number(blocks[key].runningQty || 0);
+
+      blocks[key].unit += delta * qty;
+      blocks[key].runningQty += delta * qty;
+
+      const newUnit = Number(blocks[key].unit || 0);
+      const newRunningQty = Number(blocks[key].runningQty || 0);
+      const curBlock = blocks[key].block;
+
+      let blkStart = 0;
+      let blkClose = 0;
+
+      // STOCK positions must be split-aware.
+      // Open/close is based ONLY on Running Position Quantity transitions.
+      // OPTIONS / SPREADS preserve legacy unit-based behavior.
+      if (tradeType === 'STOCK') {
+        blkStart = (prevRunningQty === 0 && newRunningQty !== 0) ? 1 : 0;
+        blkClose = (prevRunningQty !== 0 && newRunningQty === 0) ? 1 : 0;
+      } else {
+        blkStart = (prevUnit === 0 && newUnit !== 0) ? 1 : 0;
+        blkClose = (prevUnit !== 0 && newUnit === 0) ? 1 : 0;
+      }
+
+      // Reset P&L accumulators at the START of every new block.
+      if (blkStart) {
+        blocks[key].pnl = 0;
+        blocks[key].entryCost = 0;
+      }
+
+      // ── CTX counters ──────────────────────────────────────────────────────
+      if (blkStart) ctxBlocksOpened++;
+      if (blkClose) ctxBlocksClosed++;
+      if (action === 'RAD' && ticker) ctxRADRows++;
+      // ─────────────────────────────────────────────────────────────────────
+
+      // Build unique Position ID when the block starts.
+      let posId = blocks[key].positionId;
+      if (blkStart && ticker && tradeType !== '') {
+        const stratAbbrevPos = getStratAbbrev(strategyType || '');
+        const tgSuffixPos = `TG${String(curBlock).padStart(3, '0')}`;
+
+        if (spreadId) {
+          posId = `${spreadId}-${tgSuffixPos}`;
+        } else if (tradeType === 'OPTION') {
+          const expStr2 = (colMap['option expiration'] !== undefined &&
+            row[colMap['option expiration'] - 1] instanceof Date)
+            ? Utilities.formatDate(row[colMap['option expiration'] - 1], tz, 'yyMMdd') : '';
+          const strike2 = Number(row[colMap['option strike'] - 1]) || 0;
+          const cp2 = row[colMap['call/put'] - 1].toString().toUpperCase()
+            .replace('CALL', 'C').replace('PUT', 'P');
+          posId = `${acct}-${ticker}-${stratAbbrevPos}${expStr2 ? `-${expStr2}` : ''}-${String(Math.round(strike2)).padStart(5, '0')}${cp2}-${tgSuffixPos}`;
+        } else {
+          posId = `${acct}-${ticker}-${stratAbbrevPos}-${tgSuffixPos}`;
+        }
+
+        blocks[key].positionId = posId;
+        blocks[key].strategyType = strategyType;
+      }
+      row[colMap['position id'] - 1] = posId;
+
+      // Trade Group ID
+      const optExpRaw = row[colMap['option expiration'] - 1];
+      const optExpStr = optExpRaw instanceof Date ? Utilities.formatDate(optExpRaw, tz, 'yyMMdd') : '';
+      const isOption = tradeType === 'OPTION';
+      const stratAbbrev = getStratAbbrev(strategyType || blocks[key].strategyType);
+      const tgSuffix = `TG${String(curBlock).padStart(3, '0')}`;
+
+      const tradeGroupId = spreadId
+        ? `${spreadId}-${tgSuffix}`
+        : `${acct}-${ticker}-${stratAbbrev}${isOption && optExpStr ? '-' + optExpStr : ''}-${tgSuffix}`;
+
+      row[colMap['trade group id'] - 1] = tradeGroupId;
+      blocks[key].tradeGroupId = tradeGroupId;
+
+      row[colMap['block start flag'] - 1] = blkStart;
+      row[colMap['block number'] - 1] = curBlock;
+      row[colMap['block close flag/p&l'] - 1] = blkClose;
+      row[colMap['running position quantity'] - 1] = blocks[key].runningQty;
+
+      // === P&L CALCULATION ===
+      const hasOptionFields = !!(row[colMap['option strike'] - 1] || row[colMap['option expiration'] - 1]);
+      const multiplier = (tradeType === 'STOCK' || !hasOptionFields) ? 1 : 100;
+      let sign = 0;
+      if (action.includes('SELL TO')) sign = 1;
+      if (action.includes('BUY TO')) sign = -1;
+      blocks[key].pnl += sign * Number(row[colMap['entry price'] - 1]) * qty * multiplier;
+      if (action.includes('OPEN')) {
+        blocks[key].entryCost += Math.abs(sign * Number(row[colMap['entry price'] - 1]) * qty * multiplier);
+      }
+
+      if (blkClose) {
+        row[colMap['realized p&l'] - 1] = blocks[key].pnl;
+        row[colMap['percent p&l'] - 1] = blocks[key].entryCost
+          ? (blocks[key].pnl / blocks[key].entryCost * 100)
+          : 0;
+        row[colMap['trade status'] - 1] = 'Closed';
+        row[colMap['closing date'] - 1] = row[colMap['trade date'] - 1];
+        if (row[tsIdx] && blocks[key].openTs) {
+          const days = (row[tsIdx] - blocks[key].openTs) / (1000 * 60 * 60 * 24);
+          row[colMap['trade duration'] - 1] = Math.round(days * 100) / 100;
+        }
+        blocks[key].block++;
+
+      } else if (blkStart) {
+        row[colMap['trade status'] - 1] = 'Open';
+        blocks[key].openTs = row[tsIdx];
+      }
+
+    } // end main row loop
+
+    // ── POST-PASS: Link stock settlement legs to their parent spread block ────
+    const closingSpreadLookup = {};
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const blockCloseFlag = row[colMap['block close flag/p&l'] - 1];
+      const rowTradeType = row[colMap['trade type'] - 1].toString().toUpperCase().trim();
+      if (blockCloseFlag !== 1 && blockCloseFlag !== '1') continue;
+      if (rowTradeType === 'STOCK') continue;
+      const rowAcct = row[colMap['account'] - 1].toString().toUpperCase();
+      const rowTicker = row[colMap['ticker'] - 1].toString().toUpperCase();
+      const rowTgId = row[colMap['trade group id'] - 1].toString().trim();
+      const rowStrat = row[colMap['strategy type'] - 1].toString().trim();
+      const closingDate = row[colMap['closing date'] - 1];
+      if (!rowAcct || !rowTicker || !rowTgId || !(closingDate instanceof Date)) continue;
+      const closingDateStr = Utilities.formatDate(closingDate, tz, 'yyyy-MM-dd');
+      closingSpreadLookup[`${rowAcct}|${rowTicker}|${closingDateStr}`] = { tgId: rowTgId, strategy: rowStrat };
+    }
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowTradeType = row[colMap['trade type'] - 1].toString().toUpperCase().trim();
+      if (rowTradeType !== 'STOCK') continue;
+      const rowAction = row[colMap['action'] - 1].toString().trim().toUpperCase();
+      if (rowAction !== 'BUY TO OPEN' && rowAction !== 'SELL TO CLOSE') continue;
+      const rowAcct = row[colMap['account'] - 1].toString().toUpperCase();
+      const rowTicker = row[colMap['ticker'] - 1].toString().toUpperCase();
+      const tradeDate = row[colMap['trade date'] - 1];
+      if (!(tradeDate instanceof Date)) continue;
+      const tradeDateStr = Utilities.formatDate(tradeDate, tz, 'yyyy-MM-dd');
+      const parent = closingSpreadLookup[`${rowAcct}|${rowTicker}|${tradeDateStr}`];
+      if (!parent) continue;
+      row[colMap['trade group id'] - 1] = `${parent.tgId}-ST`;
+      row[colMap['position id'] - 1] = `${parent.tgId}-ST`;
+      row[colMap['strategy type'] - 1] = parent.strategy;
+      importIssuesAdd(ctx, 'INFO', dataStartRow + i, 'Trade Group ID',
+        `${parent.tgId}-ST`,
+        `Stock settlement leg linked to parent spread block. TG ID → ${parent.tgId}-ST`);
+    }
+    // ── END POST-PASS ─────────────────────────────────────────────────────────
+
+    let openAtEnd = 0;
+    Object.values(blocks).forEach(b => {
+      const strategyUpper = String(b.strategyType || '').trim().toUpperCase();
+      const looksLikeStock =
+        strategyUpper.includes('STOCK') &&
+        !strategyUpper.includes('CALL') &&
+        !strategyUpper.includes('PUT');
+
+      if (looksLikeStock) {
+        if (Number(b.runningQty || 0) !== 0) openAtEnd++;
+      } else {
+        if (Number(b.unit || 0) !== 0) openAtEnd++;
+      }
+    });
+
+    importIssuesSetMetric(ctx, 'SourceRowsReadExclHeader', data.length);
+    importIssuesSetMetric(ctx, 'RowsWrittenExclHeader', data.length);
+    importIssuesSetMetric(ctx, 'SpreadGroupsBuilt', Object.keys(spreadKeyMap).length);
+    importIssuesSetMetric(ctx, 'StrikeCollisions', ctxStrikeCollisions);
+    importIssuesSetMetric(ctx, 'BlocksOpened', ctxBlocksOpened);
+    importIssuesSetMetric(ctx, 'BlocksClosed', ctxBlocksClosed);
+    importIssuesSetMetric(ctx, 'RADRowsParsed', ctxRADRows);
+    importIssuesSetMetric(ctx, 'OpenPositionsAtEnd', openAtEnd);
+    importIssuesSetMetric(ctx, 'MissingSpreadGroupIds', ctxMissingSpreadGroup);
+    importIssuesSetMetric(ctx, 'Success', '1');
+
+    if (openAtEnd > 0) {
+      importIssuesAdd(ctx, 'INFO', 'End of data', 'Open Positions',
+        openAtEnd + ' position(s)',
+        'These positions have no closing event in the current dataset — ' +
+        'expected if you have live LEAP spreads still open.');
+    }
+
+    const outputGrid = [helperData[0], helperData[1], helperData[2], ...data];
+    stagingSheet.clearContents();
+    stagingSheet.getRange(1, 1, outputGrid.length, outputGrid[0].length).setValues(outputGrid);
+
+    checkMissingDateTimeAndAlert(stagingSheet, 4, 'populateStagingWithBlockLogicV3');
+
+    SpreadsheetApp.getUi().alert(
+      '✅ Block logic V3 updated! Trade Group ID increments once per open-to-flat block — ' +
+      'RAD expirations close perfectly.'
+    );
+
+  } catch (e) {
+    importIssuesSetMetric(ctx, 'Success', '0');
+    importIssuesSetMetric(ctx, 'ErrorMessage', e.message);
+    importIssuesSetMetric(ctx, 'ErrorStack', (e.stack || '').substring(0, 500));
+    throw e;
+
+  } finally {
+    stagingIssuesFlush(ctx);
+  }
+}
+
+// ============================================================================
+// auditPipelineIntegrity
+//
+// PURPOSE: Read-only scan of Staging sheet. Detects data quality problems
+//          that slip past the normal pipeline (orphaned closes, missing stock
+//          legs, duplicate timestamps, malformed option fields, etc.).
+//          Writes findings to a dedicated "Audit Results" sheet.
+//          NEVER modifies Helper, Import, or Staging.
+//
+// CALL:    Run standalone from the Apps Script menu, OR add as the final
+//          step in refreshAllScripts() after populateStagingWithBlockLogicV3().
+//
+// OUTPUT:  "Audit Results" sheet — color-coded by severity:
+//          🔴 ERROR  = data integrity failure, will corrupt P&L or block logic
+//          🟡 WARN   = likely problem, needs human review
+//          🟢 INFO   = informational only, no action required
+//          ⚪ SUMMARY = per-account pipeline statistics
+// ============================================================================
+function auditPipelineIntegrity() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const stagingSheet = ss.getSheetByName('Staging');
+  if (!stagingSheet) {
+    SpreadsheetApp.getUi().alert('❌ Staging sheet not found — run refreshAllScripts() first.');
+    return;
+  }
+
+  const allData = stagingSheet.getDataRange().getValues();
+  if (allData.length < 4) {
+    SpreadsheetApp.getUi().alert('❌ Staging has no data rows (expected data from row 4 down).');
+    return;
+  }
+
+  const rawHeaders = allData[0];
+  const col = {};
+  rawHeaders.forEach((h, i) => {
+    const norm = h.toString().trim().toLowerCase();
+    if (norm) col[norm] = i;
+  });
+
+  const data = allData.slice(3);
+  const DATA_START_ROW = 4;
+  const tz = ss.getSpreadsheetTimeZone(); // FIX 2: capture once, reuse everywhere
+
+  const OPEN_ACTIONS = ['BUY TO OPEN', 'SELL TO OPEN'];
+  const CLOSE_ACTIONS = ['BUY TO CLOSE', 'SELL TO CLOSE'];
+  const TRADE_ACTIONS = [...OPEN_ACTIONS, ...CLOSE_ACTIONS];
+
+  const findings = [];
+
+  function flag(check, severity, dataIdx, account, ticker, tradeDate, action, field, value, detail) {
+    const tdDisplay = tradeDate instanceof Date
+      ? Utilities.formatDate(tradeDate, tz, 'M/d/yyyy') // FIX 2: uses tz
+      : (tradeDate || '').toString();
+    findings.push([
+      check, severity,
+      dataIdx + DATA_START_ROW,
+      (account || '').toString().toUpperCase(),
+      (ticker || '').toString().toUpperCase(),
+      tdDisplay,
+      (action || '').toString().toUpperCase(),
+      field,
+      value.toString(),
+      detail
+    ]);
+  }
+
+  function cv(row, colName) {
+    const i = col[colName];
+    return (i !== undefined) ? row[i] : '';
+  }
+  function cvStr(row, colName) { return (cv(row, colName) || '').toString().trim(); }
+  function cvUpper(row, colName) { return cvStr(row, colName).toUpperCase(); }
+  function cvNum(row, colName) { return Number(cv(row, colName)) || 0; }
+  function cvDate(row, colName) {
+    const v = cv(row, colName);
+    return (v instanceof Date && !isNaN(v.getTime())) ? v : null;
+  }
+
+  // ── Sets built once — used by multiple checks ─────────────────────────────
+  // (moved outside try so catch block can still reference findings safely)
+  const posHasStart = new Set();
+  const posHasClose = new Set();
+  const posFirstRow = {};
+
+  try {
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 1 — Negative Running Position Quantity
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const runQty = cvNum(row, 'running position quantity');
+      const ticker = cvStr(row, 'ticker');
+      if (runQty < 0 && ticker) {
+        flag('NEG_RUNNING_QTY', 'ERROR', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), cv(row, 'action'),
+          'Running Position Quantity', runQty,
+          'Quantity went negative (' + runQty + '). A closing row arrived with no ' +
+          'matching opener. Check for a missing BUY/SELL TO OPEN in this dataset, ' +
+          'or a wrong Account assignment on the opening leg.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 2 — Block Close Flag = 1 but Running Position Quantity ≠ 0
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const blkClose = cvNum(row, 'block close flag/p&l');
+      const runQty = cvNum(row, 'running position quantity');
+      const ticker = cvStr(row, 'ticker');
+      if (blkClose === 1 && runQty !== 0 && ticker) {
+        flag('CLOSE_QTY_NONZERO', 'ERROR', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), cv(row, 'action'),
+          'Running Position Quantity', runQty,
+          'Block Close Flag = 1 but Running Position Quantity = ' + runQty +
+          ' (expected 0). One or more legs of this position may be missing. ' +
+          'P&L on this block is likely incorrect.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 3 — Duplicate Trade Time Stamps
+    // ════════════════════════════════════════════════════════════════════════
+    const tsMap = {};
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const acct = cvUpper(row, 'account');
+      const ticker = cvStr(row, 'ticker');
+      const action = cvUpper(row, 'action');
+      if (!ticker || !TRADE_ACTIONS.includes(action)) continue;
+      const ts = cv(row, 'trade time stamp');
+      const tsStr = ts instanceof Date ? ts.toISOString() : ts.toString();
+      if (!tsStr) continue;
+      const key = `${acct}|${tsStr}|${ticker}|${action}`;
+      if (!tsMap[key]) tsMap[key] = [];
+      tsMap[key].push(i);
+    }
+    for (const [key, rows] of Object.entries(tsMap)) {
+      if (rows.length > 1) {
+        rows.forEach(i => {
+          const row = data[i];
+          const parts = key.split('|');
+          flag('DUPLICATE_TIMESTAMP', 'ERROR', i,
+            cv(row, 'account'), cv(row, 'ticker'), cv(row, 'trade date'), cv(row, 'action'),
+            'Trade Time Stamp', parts[1],
+            'This exact row (Account + Timestamp + Ticker + Action) appears ' +
+            rows.length + ' times in Staging. Likely a double-import. ' +
+            'All duplicate staging rows: ' + rows.map(r => r + DATA_START_ROW).join(', '));
+        });
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 4 — Position ID exists but no Block Start Flag in the block
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const posId = cvStr(row, 'position id');
+      const ticker = cvStr(row, 'ticker');
+      if (!posId || !ticker) continue;
+      if (cvNum(row, 'block start flag') === 1) posHasStart.add(posId);
+      if (cvNum(row, 'block close flag/p&l') === 1) posHasClose.add(posId);
+      if (posFirstRow[posId] === undefined) posFirstRow[posId] = i;
+    }
+
+    const reportedNoStart = new Set();
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const posId = cvStr(row, 'position id');
+      const ticker = cvStr(row, 'ticker');
+      if (!posId || !ticker || reportedNoStart.has(posId)) continue;
+      if (!posHasStart.has(posId)) {
+        reportedNoStart.add(posId);
+        flag('POSID_NO_BLOCK_START', 'ERROR', posFirstRow[posId],
+          cv(data[posFirstRow[posId]], 'account'), ticker,
+          cv(data[posFirstRow[posId]], 'trade date'),
+          cv(data[posFirstRow[posId]], 'action'),
+          'Position ID', posId,
+          'Position ID found on rows but no Block Start Flag = 1 exists. ' +
+          'The opening trade for this position is missing from the dataset. ' +
+          'P&L, Trade Duration, and Running Quantity for this block are unreliable.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 5 — Block Start Flag = 1 but Position ID is blank
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      if (!ticker) continue;
+      if (cvNum(row, 'block start flag') === 1 && !cvStr(row, 'position id')) {
+        flag('BLKSTART_NO_POSID', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), cv(row, 'action'),
+          'Position ID', '(blank)',
+          'Block Start Flag = 1 but Position ID was not generated. ' +
+          'Likely cause: Trade Type is blank on this row. ' +
+          'Check Strategy Type and Trade Type in Helper for this row.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 6 — Option rows missing Expiration, Call/Put, or Option Contract
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      const tradeType = cvUpper(row, 'trade type');
+      const action = cvUpper(row, 'action');
+      if (!ticker) continue;
+      if (![...TRADE_ACTIONS, 'RAD'].includes(action)) continue;
+      if (tradeType !== 'OPTION' && tradeType !== 'SPREAD') continue;
+
+      const strike = cv(row, 'option strike');
+      const expDate = cv(row, 'option expiration');
+      const cp = cvUpper(row, 'call/put');
+      const contract = cvStr(row, 'option contract');
+
+      const hasStrike = strike !== '' && !isNaN(Number(strike)) && Number(strike) > 0;
+      const hasExp = expDate instanceof Date || (expDate && expDate.toString().trim() !== '');
+      const validCp = (cp === 'C' || cp === 'P');
+
+      if (hasStrike && !hasExp) {
+        flag('OPTION_MISSING_EXP', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Option Expiration', '(blank)',
+          'Strike = ' + strike + ' but Option Expiration is blank. ' +
+          'Block grouping key is wrong — this row may merge with a different expiry.');
+      }
+      if (hasStrike && !validCp) {
+        flag('OPTION_MISSING_CP', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Call/Put', cp || '(blank)',
+          'Strike = ' + strike + ' but Call/Put is blank or not C/P. ' +
+          'Block grouping key is wrong.');
+      }
+      if (hasStrike && hasExp && validCp && !contract) {
+        flag('OPTION_MISSING_CONTRACT', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Option Contract', '(blank)',
+          'Option has Strike + Expiration + C/P but Option Contract (OCC format) is blank. ' +
+          'validateAndCleanImportToHelperV3 may have failed to build the OCC string for this row.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 7 — Spread rows missing Spread Group ID
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      const tradeType = cvUpper(row, 'trade type');
+      const action = cvUpper(row, 'action');
+      if (!ticker || !TRADE_ACTIONS.includes(action)) continue;
+      if (tradeType === 'SPREAD' && !cvStr(row, 'spread group id')) {
+        flag('SPREAD_MISSING_GROUP_ID', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Spread Group ID', '(blank)',
+          'Trade Type = Spread but Spread Group ID is blank. ' +
+          'Legs of this spread will be treated as individual option positions. ' +
+          'Check Strategy Type and Option Expiration on the opening leg.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 8 — Trade Status / Block Close Flag consistency
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      const action = cvUpper(row, 'action');
+      if (!ticker || ![...TRADE_ACTIONS, 'RAD'].includes(action)) continue;
+
+      const status = cvUpper(row, 'trade status');
+      const blkClose = cvNum(row, 'block close flag/p&l');
+      const closingDate = cv(row, 'closing date');
+      const hasClosingDate = closingDate instanceof Date ||
+        (closingDate && closingDate.toString().trim() !== '');
+
+      if (blkClose === 1 && status && status !== 'CLOSED') {
+        flag('CLOSE_STATUS_MISMATCH', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Trade Status', status,
+          'Block Close Flag = 1 but Trade Status = "' + status + '" (expected "Closed"). ' +
+          'Dashboard close filters will miss this position.');
+      }
+      if (status === 'CLOSED' && !hasClosingDate) {
+        flag('CLOSED_NO_DATE', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Closing Date', '(blank)',
+          'Trade Status = Closed but Closing Date is blank. ' +
+          'Trade Duration cannot be calculated.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 9 — RAD Assignment without a matching same-date BUY TO OPEN Stock leg
+    // ════════════════════════════════════════════════════════════════════════
+    const stockOpenByDateKey = new Set();
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const action = cvUpper(row, 'action');
+      const tradeType = cvUpper(row, 'trade type');
+      const ticker = cvStr(row, 'ticker');
+      if (action !== 'BUY TO OPEN' || tradeType !== 'STOCK' || !ticker) continue;
+      const acct = cvUpper(row, 'account');
+      const td = cv(row, 'trade date');
+      const tdStr = td instanceof Date ? td.toDateString() : td.toString();
+      stockOpenByDateKey.add(`${acct}|${ticker}|${tdStr}`);
+    }
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const action = cvUpper(row, 'action');
+      const ticker = cvStr(row, 'ticker');
+      if (action !== 'RAD' || !ticker) continue;
+
+      const cp = cvUpper(row, 'call/put');
+      const signedQty = cvNum(row, 'signed quantity');
+      const isAssignment = (cp === 'P' && signedQty > 0) || (cp === 'C' && signedQty < 0);
+      if (!isAssignment) continue;
+
+      const acct = cvUpper(row, 'account');
+      const td = cv(row, 'trade date');
+      const tdStr = td instanceof Date ? td.toDateString() : td.toString();
+      const key = `${acct}|${ticker}|${tdStr}`;
+
+      if (!stockOpenByDateKey.has(key)) {
+        flag('ASSIGNMENT_NO_STOCK_LEG', 'WARN', i,
+          acct, ticker, td, action,
+          'BOT UPON Stock Leg', '(missing)',
+          cp + ' assignment at $' + cvStr(row, 'option strike') +
+          ' found but no BUY TO OPEN Stock row exists for ' + ticker +
+          ' on ' + tdStr + '. The assigned shares have no cost basis in this dataset. ' +
+          'Check if the BOT UPON row failed to parse in copyMappingToImportByHeaders.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 10 — Realized P&L = 0 on a Block Close (non-RAD)
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      const action = cvUpper(row, 'action');
+      const blkClose = cvNum(row, 'block close flag/p&l');
+      const pnl = cvNum(row, 'realized p&l');
+      if (!ticker || blkClose !== 1 || action === 'RAD') continue;
+      if (pnl === 0) {
+        flag('ZERO_PNL_ON_CLOSE', 'WARN', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Realized P&L', 0,
+          'Realized P&L = $0 on a non-RAD block close. ' +
+          'This may be correct (breakeven trade) or may indicate the entry cost ' +
+          'accumulator was not populated (missing opening leg or $0 entry price on opener).');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 11 — Trade Time Stamp is blank or not a real Date  ← NEW
+    // WHY: A blank Trade Time Stamp means this row will sort to the wrong
+    //      position in any pipeline re-run, silently breaking block sequencing.
+    //      validateAndCleanImportToHelperV3 should have caught this — if it
+    //      reaches Staging blank, something bypassed validation entirely.
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      const action = cvUpper(row, 'action');
+      if (!ticker || !TRADE_ACTIONS.includes(action)) continue;
+      const ts = cv(row, 'trade time stamp');
+      if (!(ts instanceof Date) || isNaN(ts.getTime())) {
+        flag('MISSING_TIMESTAMP', 'ERROR', i,
+          cv(row, 'account'), ticker, cv(row, 'trade date'), action,
+          'Trade Time Stamp', String(ts || '(blank)'),
+          'Trade row is missing a valid Trade Time Stamp. This row cannot be sequenced ' +
+          'reliably. Re-check the source row in Helper and trace back to Import or Schwab Mapping.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 12 — Account is not exactly DT or LT  ← NEW
+    // WHY: Any account value other than DT or LT means SUMIFS by account
+    //      in the dashboard will silently miss these rows. Should have been
+    //      caught by validateAndCleanImportToHelperV3 but defensively checked here.
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      if (!ticker) continue;
+      const acct = cvUpper(row, 'account');
+      if (acct !== 'DT' && acct !== 'LT') {
+        flag('INVALID_ACCOUNT', 'ERROR', i,
+          acct, ticker, cv(row, 'trade date'), cv(row, 'action'),
+          'Account', acct || '(blank)',
+          'Account must be exactly "DT" or "LT". This row will be excluded from ' +
+          'all account-filtered dashboard views. Fix in Helper and re-run Stage 3.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CHECK 13 — Closed position where Closing Date < Trade Date  ← NEW
+    // WHY: A closing date earlier than the trade date is physically impossible
+    //      and indicates a timestamp parsing error — likely a date-only field
+    //      being set to the epoch (Jan 1 1900) instead of a real date.
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const ticker = cvStr(row, 'ticker');
+      if (!ticker) continue;
+      const tradeDate = cvDate(row, 'trade date');
+      const closingDate = cvDate(row, 'closing date');
+      if (!tradeDate || !closingDate) continue;
+      if (closingDate < tradeDate) {
+        flag('CLOSING_DATE_BEFORE_OPEN', 'ERROR', i,
+          cv(row, 'account'), ticker, tradeDate, cv(row, 'action'),
+          'Closing Date', Utilities.formatDate(closingDate, tz, 'M/d/yyyy'),
+          'Closing Date (' + Utilities.formatDate(closingDate, tz, 'M/d/yyyy') +
+          ') is before Trade Date (' + Utilities.formatDate(tradeDate, tz, 'M/d/yyyy') +
+          '). This is a timestamp parsing error. Trade Duration will be negative or wrong.');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SUMMARY — Per-account pipeline statistics
+    // ════════════════════════════════════════════════════════════════════════
+    const acctStats = {};
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const acct = cvUpper(row, 'account');
+      const ticker = cvStr(row, 'ticker');
+      if (!acct) continue;
+      if (!acctStats[acct]) {
+        acctStats[acct] = { rows: 0, opens: 0, closes: 0, openPosIds: new Set(), radRows: 0 };
+      }
+      acctStats[acct].rows++;
+      if (ticker) {
+        if (cvNum(row, 'block start flag') === 1) acctStats[acct].opens++;
+        if (cvNum(row, 'block close flag/p&l') === 1) acctStats[acct].closes++;
+        if (cvUpper(row, 'action') === 'RAD') acctStats[acct].radRows++;
+        const posId = cvStr(row, 'position id');
+        if (posId && !posHasClose.has(posId)) acctStats[acct].openPosIds.add(posId);
+      }
+    }
+
+    for (const [acct, s] of Object.entries(acctStats)) {
+      findings.push([
+        'SUMMARY', 'INFO', '', acct, '', '', '',
+        'Pipeline Stats',
+        `Rows: ${s.rows} | BlocksOpened: ${s.opens} | BlocksClosed: ${s.closes} | ` +
+        `OpenPositions: ${s.openPosIds.size} | RAD Rows: ${s.radRows}`,
+        'Informational only — overall pipeline health for this account.'
+      ]);
+    }
+
+  } catch (e) {
+    // Append a visible exception row so you always know something went wrong
+    // even if the sheet write below partially succeeds.
+    findings.push([
+      'AUDIT_EXCEPTION', 'ERROR', '', '', '', '', '',
+      'Exception', e.message,
+      'auditPipelineIntegrity threw an unexpected error. Stack: ' + (e.stack || '(no stack)')
+    ]);
+  } finally {
+
+    // ══════════════════════════════════════════════════════════════════════
+    // WRITE TO "Audit Results" — runs even if a check threw
+    // ══════════════════════════════════════════════════════════════════════
+    let auditSheet = ss.getSheetByName('Audit Results');
+    if (!auditSheet) {
+      auditSheet = ss.insertSheet('Audit Results');
+    } else {
+      auditSheet.clearContents();
+      auditSheet.clearFormats();
+    }
+
+    const AUDIT_HEADERS = [
+      'Check', 'Severity', 'Staging Row', 'Account', 'Ticker',
+      'Trade Date', 'Action', 'Field', 'Value', 'Detail'
+    ];
+
+    auditSheet.getRange(1, 1, 1, AUDIT_HEADERS.length)
+      .setValues([AUDIT_HEADERS])
+      .setFontWeight('bold')
+      .setBackground('#37474f')
+      .setFontColor('#ffffff');
+
+    if (findings.length > 0) {
+      auditSheet.getRange(2, 1, findings.length, AUDIT_HEADERS.length).setValues(findings);
+
+      const SEVERITY_COLORS = {
+        'ERROR': '#fce8e6',
+        'WARN': '#fff8e1',
+        'INFO': '#e8f5e9',
+        'SUMMARY': '#e3f2fd'
+      };
+
+      for (let i = 0; i < findings.length; i++) {
+        const severity = findings[i][1];
+        auditSheet.getRange(i + 2, 1, 1, AUDIT_HEADERS.length)
+          .setBackground(SEVERITY_COLORS[severity] || '#ffffff');
+      }
+      auditSheet.getRange(2, 2, findings.length, 1).setFontWeight('bold');
+    } else {
+      auditSheet.getRange(2, 1).setValue('✅ No issues found — pipeline is clean.');
+      auditSheet.getRange(2, 1).setBackground('#e8f5e9');
+    }
+
+    auditSheet.setFrozenRows(1);
+    auditSheet.autoResizeColumns(1, AUDIT_HEADERS.length);
+    auditSheet.setColumnWidth(AUDIT_HEADERS.length, 480);
+
+    const errorCount = findings.filter(f => f[1] === 'ERROR').length;
+    const warnCount = findings.filter(f => f[1] === 'WARN').length;
+    const infoCount = findings.filter(f => f[1] === 'INFO').length;
+    const summaryCount = findings.filter(f => f[1] === 'SUMMARY').length;
+
+    SpreadsheetApp.getUi().alert(
+      '✅ Audit complete! See "Audit Results" sheet.\n\n' +
+      '🔴 Errors:   ' + errorCount + '  (data integrity — fix before using P&L)\n' +
+      '🟡 Warnings: ' + warnCount + '  (likely problems — review manually)\n' +
+      '🟢 Info:     ' + infoCount + '  (informational only)\n' +
+      '⚪ Summary:  ' + summaryCount + '  (per-account pipeline stats)'
+    );
+
+  } // end finally
+}
+
+/*
+-------------------------
+Append Master from Staging
+-------------------------
+*/
+function appendStagingToMaster() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const master = ss.getSheetByName("Master");
+  const staging = ss.getSheetByName("Staging");
+  if (!master || !staging) throw new Error("Sheets not found.");
+
+  const numCols = staging.getLastColumn();
+
+  // Get Staging data (row 4 down)
+  // Changed to see if all rows are filled
+  const accountColIdx = staging.getRange(1, 1, 1, numCols).getValues()[0].indexOf("Trade Date") + 1;
+  //const accountColIdx = staging.getRange(1, 1, 1, numCols).getValues()[0].indexOf("Trade Date") + 1;
+  const stagingData = staging.getRange(4, 1, staging.getLastRow() - 3, numCols).getValues()
+    .filter(row => row[accountColIdx - 1] !== "" && row[accountColIdx - 1] !== null);
+
+  // Find first empty row in Master (after header)
+  const firstEmptyMasterRow = master.getLastRow() + 1;
+
+  if (stagingData.length) {
+    master.getRange(firstEmptyMasterRow, 1, stagingData.length, numCols).setValues(stagingData);
+  }
+}
+function backupMasterSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet(), m = ss.getSheetByName('Master');
+  const name = 'Master_Backup_' + Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyyMMdd_HHmmss');
+  m.copyTo(ss).setName(name);
+  //logAction('BACKUP MASTER',name);
+}
+// Clear master
+function clearMasterExceptHeader() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("master");
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+  }
+}
+
+/** Manual entry from Entry tab to Imort function added 11/27 0650
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * */
+function sendEntryToImport() {
+  var ss = SpreadsheetApp.getActive();
+  var entrySheet = ss.getSheetByName('Entry');
+  var importSheet = ss.getSheetByName('Import');
+
+  if (!entrySheet || !importSheet) {
+    throw new Error('Missing "Entry" or "Import" sheet.');
+  }
+
+  var HEADER_ROW = 1;
+  var FIRST_DATA_ROW = 2;
+
+  var lastRow = entrySheet.getLastRow();
+  var lastCol = entrySheet.getLastColumn();
+
+  if (lastRow < FIRST_DATA_ROW) {
+    SpreadsheetApp.getUi().alert('No data rows found on Entry sheet.');
+    return;
+  }
+
+  // Headers
+  var entryHeaders = entrySheet.getRange(HEADER_ROW, 1, 1, lastCol).getValues()[0];
+  var importHeaders = importSheet.getRange(HEADER_ROW, 1, 1, importSheet.getLastColumn()).getValues()[0];
+
+  // All data rows on Entry
+  var numDataRows = lastRow - FIRST_DATA_ROW + 1;
+  var entryData = entrySheet.getRange(FIRST_DATA_ROW, 1, numDataRows, lastCol).getValues();
+
+  // ===============================
+  // MANDATORY FIELD VALIDATION
+  // ===============================
+
+  // Helper: get column index by header name (1-based)
+  function colIdx(headerName) {
+    var idx = entryHeaders.indexOf(headerName);
+    return idx === -1 ? -1 : idx + 1;
+  }
+
+  // Required columns by header name
+  var accountColIdx = colIdx('Account');
+  var tradeDateColIdx = colIdx('Trade Date');
+  var tickerColIdx = colIdx('Ticker');
+  var actionColIdx = colIdx('Action');
+  var quantityColIdx = colIdx('Quantity');
+  var entryPriceColIdx = colIdx('Entry Price');
+  var strategyTypeColIdx = colIdx('Strategy Type');
+  var tradeTypeColIdx = colIdx('Trade Type');
+
+  // Sanity check: make sure all required headers exist
+  if (
+    accountColIdx === -1 ||
+    tradeDateColIdx === -1 ||
+    tickerColIdx === -1 ||
+    actionColIdx === -1 ||
+    quantityColIdx === -1 ||
+    entryPriceColIdx === -1 ||
+    strategyTypeColIdx === -1 ||
+    tradeTypeColIdx === -1
+  ) {
+    throw new Error('One or more required headers are missing on the Entry sheet.');
+  }
+
+  // Allowed values (uppercase)
+  var allowedAccounts = ['LT STOCK', 'LT OPTION', 'DT STOCK', 'DT OPTION'];
+  var allowedStrategyTypes = [
+    'LONG CALL',
+    'LONG PUT',
+    'SHORT CALL',
+    'SHORT PUT',
+    'CCS',
+    'CDS',
+    'PCS',
+    'PDS',
+    'IC'
+  ];
+  var allowedTradeTypes = ['OPTION', 'SPREAD', 'STOCK'];
+
+  var badRows = [];  // store human row numbers with issues
+
+  for (var r = 0; r < entryData.length; r++) {
+    var rowValues = entryData[r];
+
+    // Skip completely empty rows
+    var isEmpty = rowValues.every(function (val) {
+      return val === '' || val === null;
+    });
+    if (isEmpty) continue;
+
+    var sheetRow = r + FIRST_DATA_ROW; // real row number in the sheet
+
+    // Helper to get uppercase trimmed string from a column
+    function val(colIdx) {
+      var v = rowValues[colIdx - 1];
+      return (v === null || v === undefined) ? '' : v.toString().trim();
+    }
+    function valUpper(colIdx) {
+      return val(colIdx).toUpperCase();
+    }
+
+    // Account: must be one of the allowed values
+    var accountUpper = valUpper(accountColIdx);
+    if (allowedAccounts.indexOf(accountUpper) === -1) {
+      badRows.push(sheetRow + ' (Account)');
+      continue; // no need to check other fields if Account is invalid
+    }
+
+    // Ticker: must not be blank
+    if (val(tickerColIdx) === '') {
+      badRows.push(sheetRow + ' (Ticker)');
+    }
+
+    // Trade Date: must not be blank
+    if (val(tradeDateColIdx) === '') {
+      badRows.push(sheetRow + ' (Trade Date)');
+    }
+
+    // Action: must not be blank
+    if (val(actionColIdx) === '') {
+      badRows.push(sheetRow + ' (Action)');
+    }
+
+    // Quantity: must not be blank
+    if (val(quantityColIdx) === '') {
+      badRows.push(sheetRow + ' (Quantity)');
+    }
+
+    // Entry Price: must not be blank
+    if (val(entryPriceColIdx) === '') {
+      badRows.push(sheetRow + ' (Entry Price)');
+    }
+
+    // Strategy Type: must be one of allowedStrategyTypes
+    var strategyUpper = valUpper(strategyTypeColIdx);
+    if (allowedStrategyTypes.indexOf(strategyUpper) === -1) {
+      badRows.push(sheetRow + ' (Strategy Type)');
+    }
+
+    // Trade Type: must be one of allowedTradeTypes
+    var tradeTypeUpper = valUpper(tradeTypeColIdx);
+    if (allowedTradeTypes.indexOf(tradeTypeUpper) === -1) {
+      badRows.push(sheetRow + ' (Trade Type)');
+    }
+  }
+
+  if (badRows.length > 0) {
+    SpreadsheetApp.getUi().alert(
+      'Cannot send to Import.\n\n' +
+      'The following row(s) have missing or invalid required fields:\n' +
+      badRows.join(', ') +
+      '\n\n' +
+      'Required fields:\n' +
+      '  Account (LT Stock / LT Option / DT Stock / DT Option)\n' +
+      '  Trade Date (not blank)\n' +
+      '  Action (not blank)\n' +
+      '  Quantity (not blank)\n' +
+      '  Entry Price (not blank)\n' +
+      '  Strategy Type (Long Call, Long Put, Short Call, Short Put, CCS, CDS, PCS, PDS, IC)\n' +
+      '  Trade Type (Option, Spread, Stock)'
+    );
+    return; // stop here, do not append anything
+  }
+  // ===========================
+  // END MANDATORY VALIDATION
+  // ===========================
+
+
+  var rowsToAppend = [];
+
+  for (var r = 0; r < entryData.length; r++) {
+    var rowValues = entryData[r];
+
+    // Skip completely empty rows
+    var isEmpty = rowValues.every(function (val) {
+      return val === '' || val === null;
+    });
+    if (isEmpty) {
+      continue;
+    }
+
+    // Map header -> value for this row
+    var entryMap = {};
+    for (var c = 0; c < entryHeaders.length; c++) {
+      var h = String(entryHeaders[c]).trim();
+      if (h) {
+        entryMap[h] = rowValues[c];
+      }
+    }
+
+    // Build row in Import's header order
+    var newRow = [];
+    for (var j = 0; j < importHeaders.length; j++) {
+      var h2 = String(importHeaders[j]).trim();
+      newRow.push(entryMap.hasOwnProperty(h2) ? entryMap[h2] : '');
+    }
+
+    rowsToAppend.push(newRow);
+  }
+
+  if (rowsToAppend.length === 0) {
+    SpreadsheetApp.getUi().alert('No non-empty rows found on Entry sheet.');
+    return;
+  }
+  // Added 11/27 2010 to push to Import starting with row 4
+  // Append all rows to Import in one batch, starting no higher than row 4
+  var importLastRow = importSheet.getLastRow();
+  var firstDataRow = 4;  // row 4 reserved as the first data row
+
+  // If sheet only has headers/helpers (<=3 rows used), start at row 4
+  var targetStartRow = Math.max(importLastRow + 1, firstDataRow);
+
+  importSheet
+    .getRange(targetStartRow, 1, rowsToAppend.length, rowsToAppend[0].length)
+    .setValues(rowsToAppend);
+
+  /*
+  // This writes to row 2 in Import - data designed to work starting with row 4
+  // Append all rows to Import in one batch
+  var importLastRow = importSheet.getLastRow();
+  importSheet
+    .getRange(importLastRow + 1, 1, rowsToAppend.length, rowsToAppend[0].length)
+    .setValues(rowsToAppend);
+    */
+  // === Clear used rows on Entry (but KEEP Option Contract column formula) ===
+  var HEADER_ROW = 1;
+  var FIRST_DATA_ROW = 2;
+  var lastCol = entrySheet.getLastColumn();
+
+  // Find the "Option Contract" column by header name so we don't hardcode 24
+  var entryHeaders = entrySheet
+    .getRange(HEADER_ROW, 1, 1, lastCol)
+    .getValues()[0];
+  var optionColIndex = entryHeaders.indexOf("Option Contract") + 1; // +1 for 1-based columns
+
+  var numDataRows = entrySheet.getLastRow() - FIRST_DATA_ROW + 1;
+  if (numDataRows > 0) {
+    // Clear columns BEFORE Option Contract
+    if (optionColIndex > 1) {
+      entrySheet
+        .getRange(FIRST_DATA_ROW, 1, numDataRows, optionColIndex - 1)
+        .clearContent();
+    }
+
+    // Clear columns AFTER Option Contract
+    if (optionColIndex < lastCol) {
+      entrySheet
+        .getRange(FIRST_DATA_ROW, optionColIndex + 1, numDataRows, lastCol - optionColIndex)
+        .clearContent();
+    }
+  }
+
+  SpreadsheetApp.getUi().alert(
+    'Sent ' + rowsToAppend.length + ' row(s) from Entry to Import.'
+  );
+}

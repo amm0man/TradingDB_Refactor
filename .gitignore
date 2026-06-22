@@ -1,0 +1,20 @@
+@"
+# clasp authentication tokens — NEVER commit this file
+.clasprc.json
+
+# Node modules (if you ever add dependencies later)
+node_modules/
+
+# Operating system generated files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE folders
+.vscode/
+.idea/
+
+# Log and backup files
+*.log
+*.bak
+*~
+"@ | Out-File -FilePath .gitignore -Encoding utf8
