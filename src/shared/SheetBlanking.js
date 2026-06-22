@@ -1,5 +1,24 @@
 
-
+/**
+ * SheetBlanking.js
+ *
+ * Collection of helper functions to safely clear data from various sheets
+ * while preserving header rows.
+ *
+ * Used heavily during re-imports and pipeline resets so old data doesn't
+ * mix with new data.
+ *
+ * Main functions:
+ *   - tosBlankSheetExceptHeader_()     → core reusable blanking engine (private)
+ *   - tosBlankTosTop(), tosBlankTosTrades(), etc. → specific TOS sheets
+ *   - tosBlankALLTOSSheets()           → one-click clear of all TOS-related sheets
+ *   - blankAllSchwabSheets()           → clears Schwab Import + Schwab Mapping
+ *   - blankAllPrepSheets()             → clears Import / Helper / Staging
+ *
+ * Note: There is a large block of commented-out legacy code below
+ * (the old clearSchwabImportExceptHeader that protected formula columns).
+ * That code can be safely removed once we're confident it's no longer needed.
+ */
 /**
  * TOSTrades and TOSTop and Combined Sheets Blanking
  * Clears a sheet's contents EXCEPT the header row (row 1).
@@ -84,31 +103,7 @@ function tosBlankALLTOSSheets() {
  * Blank Schwab Import and Schwab Mapping Sheets
  */
 function blankAllSchwabSheets() { clearSchwabImportExceptHeader(); clearSchwabMappingExceptHeader(); logAction('BLANK ALL Schwab SHEETS', ''); }
-/** 
-function clearSchwabImportExceptHeader() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("Schwab Import");
-  if (!sheet) throw new Error('Missing sheet: "Schwab Import"');
 
-  var lastRow = sheet.getLastRow();
-  var lastCol = sheet.getLastColumn();
-  if (lastRow <= 1) return; // header only
-
-  // NEW schema:
-  // A = Account (clear)
-  // B = Date (formula - keep)
-  // C = Time (formula - keep)
-  // D = Time Stamp (clear) ... to the right
-
-  // Clear Account data (A2:A)
-  sheet.getRange(2, 1, lastRow - 1, 1).clearContent();
-
-  // Clear Timestamp + data columns (D:whatever the sheet currently has)
-  if (lastCol >= 4) {
-    sheet.getRange(2, 4, lastRow - 1, lastCol - 3).clearContent();
-  }
-}
-*/
 
 function clearSchwabImportExceptHeader() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();

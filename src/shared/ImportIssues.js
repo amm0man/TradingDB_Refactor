@@ -1,4 +1,23 @@
 /**
+ * ImportIssues.js
+ *
+ * Shared logging and diagnostics service used across the entire trading pipeline.
+ *
+ * Provides a CTX (context) based system that can write to THREE different issue sheets:
+ *   - "Import Issues"
+ *   - "Staging Issues"
+ *   - "Schwab Mapping Issues"
+ *
+ * All three sheets use the same 8-column schema and share the same underlying engine.
+ * This file also contains the generic date/time validation helper
+ * checkMissingDateTimeAndAlert() used after import and mapping steps.
+ *
+ * Key concepts:
+ *   - Start → Add issues/metrics during processing → Flush at the end
+ *   - Supports multiple write modes (APPEND_BOTTOM, APPEND_TOP, OVERWRITE)
+ *   - RunId ties all logs from one pipeline execution together
+ */
+/**
  * checkMissingDateTimeAndAlert
  *
  * Generic post-run check: scans any sheet's data rows (starting at rowStart)
