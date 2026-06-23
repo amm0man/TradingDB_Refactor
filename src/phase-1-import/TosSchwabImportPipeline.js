@@ -1553,11 +1553,6 @@ function pushTosTopCombinedToTosTop() {
       }
 
 
-      // uncomment after debugging date issue added 1/24 1645
-      /*
-      for (let r = 1; r < values.length; r++) {
-        const row = values[r];
-      */
       const isBlank = row.every(v => String(v ?? "").trim() === "");
       if (isBlank) {
         ctx.metrics.BlankRowsSkipped++;
