@@ -1,4 +1,32 @@
 
+/**
+ * @file MapSchwabImportByHeadersV3.js
+ * @description Phase 2 (Mapping) — Standardizes Schwab CSV import data by dynamically
+ *              reading and mapping column headers to the project's expected schema.
+ *
+ * This file is responsible for taking raw Schwab trade data (imported in Phase 1)
+ * and transforming it into a consistent, predictable format that downstream
+ * processing (Phase 3) and the Master sheet can rely on.
+ *
+ * Key characteristics:
+ * - Header-driven mapping (more robust than fixed column positions)
+ * - Handles variations in Schwab export formats over time (V3 = latest iteration)
+ * - Prepares data for unified import pipelines and multi-leg spread handling
+ * - Works closely with TosSchwabImportPipeline.js and other Phase 1 import logic
+ *
+ * This approach reduces fragility when Schwab occasionally changes their CSV layout.
+ *
+ * Related files:
+ * - phase-1-import/TosSchwabImportPipeline.js
+ * - phase-1-import/ImportIssues.js (for logging mapping problems)
+ * - shared/SettingsService.js (for any mapping-related configuration)
+ *
+ * Future refactor notes:
+ * - Once well-commented, we can evaluate whether any mapping logic here
+ *   could be consolidated with similar logic elsewhere.
+ *
+ * @refactor-session June 23, 2026
+ */
 function debugCorpActionStockEmitterV3() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
