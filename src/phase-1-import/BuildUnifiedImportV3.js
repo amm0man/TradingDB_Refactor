@@ -29,7 +29,7 @@
  */
 /**
  * debugCorpActionStockEmitterV3() has been moved to:
- * src/debug/debugSchwabHeaderMapping.js
+ * src/debug/debugBuildUnifiedImport.js
  *
  * This was done on June 23, 2026 to reduce the size of the core mapping file
  * and keep standalone debug utilities organized in one place.
