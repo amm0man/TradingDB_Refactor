@@ -1,4 +1,35 @@
 /**
+ * @file TosSchwabImportPipeline.js
+ * @description Main import pipeline for bringing trade data from thinkorswim (TOS)
+ *              and Schwab CSV exports into the Trading Database.
+ *              This is a core Phase 1 (Import) file in the 3-phase architecture.
+ *
+ * Responsibilities:
+ * - Orchestrates the full import workflow triggered from the custom menu
+ * - Reads raw TOS and Schwab trade files/folders
+ * - Parses and normalizes trade data (including multi-leg options spreads)
+ * - Coordinates writing to staging/import sheets via helper functions
+ * - Logs issues and exceptions for later review (works with ImportIssues.js)
+ * - Respects debug/alert toggles from SettingsService.js
+ *
+ * This file historically contained a large amount of logic. Our current goal
+ * is to add clear, verbose comments so the flow becomes easier to understand
+ * before we consider any structural refactoring (function extraction, duplication removal, etc.).
+ *
+ * Related files (Phase 1):
+ * - shared/SettingsService.js          → configuration & debug flags
+ * - phase-1-import/ImportIssues.js     → issue logging during import
+ * - phase-1-import/TosSheetWriteHelpers.js → sheet writing helpers
+ * - phase-1-import/MapSchwabImportByHeadersV3.js (and similar mapping files)
+ *
+ * Notes for future work:
+ * - All changes in this refactor session are verified with `clasp push`.
+ * - We are intentionally starting with documentation only (low risk).
+ * - Later we will look for opportunities to consolidate repeated helper logic.
+ *
+ * @refactor-session June 23, 2026
+ */
+/**
  * TosSchwabImportPipeline.gs
  *
  * This file is a full replacement pipeline for:
