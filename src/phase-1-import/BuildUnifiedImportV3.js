@@ -173,14 +173,44 @@ function buildUnifiedImportV3() {
     }
 
     // =========================================================================
-    // NESTED HELPERS – Fee enrichment & timestamp matching
+    // NESTED HELPERS – ROADMAP (kept inside buildUnifiedImportV3 for now)
     //
-    // These helpers stay inside buildUnifiedImportV3 because they need direct
-    // access to the in-memory queues (topTradeQueueByKey, etc.).
+    // Everything below stays nested because many helpers need the in-memory
+    // queues and maps that are built later in this same function.
     //
-    // Their job is to match trade legs from TosTrades with the corresponding
-    // fee / amount rows from TosTop using timestamp + symbol + quantity rules.
+    // Major groups you will see, in roughly this order:
+    //
+    //   A) Fee enrichment & timestamp matching
+    //      pullTopTradeEnrichment, pullTopTradeEnrichmentButterfly,
+    //      previewTopCandidates, removeFromExactIndex
+    //      → Match TosTrades legs to the correct TosTop fee/amount rows.
+    //
+    //   B) Iron Condor (IC) retagging
+    //      decideIcRetag (+ related lifecycle helpers later in the trade loop)
+    //      → Inherit "IRON CONDOR" onto closing legs when inventory evidence exists.
+    //
+    //   C) Sheet / field utilities
+    //      readSheetObjects, getField, toNum, roundTo, pricesClose
+    //
+    //   D) Date & time normalization
+    //      normalizeDate, normalizeTime, normalizeTimeHHmmss, toDateObject,
+    //      makeTradeMatchKey
+    //
+    //   E) Symbol & option parsing
+    //      normalizeUnderlyingFromTradeSymbol, parseDottedOptionSymbol,
+    //      normalizeSymbol
+    //
+    //   F) Exercise / Assign + Action helpers
+    //      normalizeSpread, isExerciseOrAssignSpread,
+    //      computeSignedAmountFromTrade, actionFromTosTrades,
+    //      formatUnifiedSymbol
+    //
+    // Later (after the main sheet loads) you will also see:
+    //   • Mapping-sheet loaders (CusipMap, CorpActionStockMap, SplitAdjustments…)
+    //   • Special-case parsers (DRIP, TDA fractional sells, RAD splits, etc.)
+    //
     // =========================================================================
+
 
     function previewTopCandidates(list, limit) {
       const arr = Array.isArray(list) ? list : [];
