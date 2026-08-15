@@ -3848,9 +3848,13 @@ function buildUnifiedImportV3() {
 
     applyFeesToTopLegRuleB(unifiedTrades);
 
-    // ----------------------------
-    // 7) Convert TosTop non-trades (TYPE != TRD) -> Unified non-trades
-    // ----------------------------
+       // =========================================================================
+    // 7) CONVERT TosTop NON-TRADE ROWS → UNIFIED NON-TRADE ROWS
+    //    Handles everything in TosTop that is NOT a regular trade (TYPE != TRD):
+    //    cash movements, fees, dividends, transfers, corporate actions, etc.
+    //    These rows are turned into the corresponding rows in the final
+    //    "Schwab Import" table.
+    // =========================================================================
     const unifiedNonTrades = [];
     const radSplitCandidateBuffer = {};
 
