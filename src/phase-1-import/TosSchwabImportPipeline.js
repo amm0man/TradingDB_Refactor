@@ -1692,10 +1692,10 @@ function pushTosTopCombinedToTosTop() {
   }
 }
 
-/** ======================================================================
- *  Shared helper: create/get sheet
- *  ====================================================================== */
-
+/**
+ * Returns the sheet with the given name, creating it if it does not exist.
+ * Simple shared utility used by several import/push functions.
+ */
 function tosGetOrCreateSheet(ss, name) {
   let sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
@@ -1703,15 +1703,18 @@ function tosGetOrCreateSheet(ss, name) {
 }
 
 /**
- * Merge strategy for Combined sheets:
+ * Merges a newly imported table for ONE account into an existing Combined sheet.
  *
- * - Each import produces a fresh "newOut" table for ONE account.
- * - If combinedReplaceOnlyThatAccount=true, we read the existing Combined sheet,
- *   keep rows whose Account != this account, and replace rows for this account.
+ * Behavior (when tosConfig.combinedReplaceOnlyThatAccount is true):
+ *   - Keeps all rows that belong to OTHER accounts
+ *   - Replaces all rows that belong to the current Account
+ *   - Uses the new table’s header as the canonical header
  *
  * Why this matters:
- * - It lets you run "Import LT" then "Import DT" and keep both in the same Combined sheet.
- * - It also makes each account import idempotent (re-running LT won’t duplicate LT rows).
+ *   - Lets you import LT and DT into the same Combined sheet without overwriting each other
+ *   - Makes re-running an import for one account safe (idempotent)
+ *
+ * If the Account label is missing or the feature is turned off, it simply returns the new table.
  */
 function tosMergeAccountLabeledCombined(existingSheet, newOut, Account) {
   if (!tosConfig.combinedReplaceOnlyThatAccount) {
