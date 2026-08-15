@@ -662,10 +662,15 @@ function tosTradesImportFromFolder(folderIdPropKey, Account) {
 
 
 /**
- * Trades CSV parser:
- * - Finds header row containing "Exec Time" and "Spread"
- * - Uses stop rule: blank row then "EQUITIES" in column A stops
- * - Hard stops if "OPTIONS" or "PROFITS AND LOSSES" appear in column A
+ * Parses a single TOS Trades CSV file.
+ *
+ * Key behaviors:
+ *   - Locates the real header row (must contain both "Exec Time" and "Spread")
+ *   - Stops when it sees a blank row followed by "EQUITIES" in column A
+ *   - Also hard-stops if it sees "OPTIONS" or "PROFITS AND LOSSES"
+ *   - Returns { header, rows } or null if the file cannot be parsed
+ *
+ * Called by tosTradesImportFromFolder for every CSV in the folder.
  */
 function tosTradesParseOneCsvFile(file, ctx) {
   let text = file.getBlob().getDataAsString();
@@ -1185,7 +1190,17 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
   }
 }
 
-
+/**
+ * Parses a single TOS Top-of-Book / Account Statement CSV file.
+ *
+ * Key behaviors:
+ *   - Locates the real header row (must contain "DATE", "TIME", and "DESCRIPTION")
+ *   - Handles both comma-separated and tab-separated files
+ *   - Strips BOM if present
+ *   - Returns { header, rows } or null if the file cannot be parsed
+ *
+ * Called by tosTopImportFromFolder for every CSV in the folder.
+ */
 function tosTopParseOneCsvFile(file) {
   let text = file.getBlob().getDataAsString().replace(/^\uFEFF/, '');
 
