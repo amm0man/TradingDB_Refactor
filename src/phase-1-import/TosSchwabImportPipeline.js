@@ -296,9 +296,29 @@ function pushTosCombinedToBoth() {
 }
 
 /** ======================================================================
- *  Trades import: CSV folder -> "TOS Trades - Combined"
- *  ====================================================================== */
-
+ *  CORE TRADES IMPORT
+ *  CSV folder → "TOS Trades - Combined"
+ *  ======================================================================
+ *
+ *  tosTradesImportFromFolder(folderIdPropKey, Account)
+ *
+ *  This is the main workhorse for importing thinkorswim trade CSVs.
+ *
+ *  High-level steps:
+ *    1. Acquire a script lock (prevents overlapping runs)
+ *    2. Start an Import Issues context for this run
+ *    3. Read the Drive folder ID from Settings
+ *    4. Collect and sort all CSV files in that folder
+ *    5. Parse each file (via tosTradesParseOneCsvFile)
+ *    6. Combine the rows, tagging each with Account + source file name
+ *    7. Write the combined result into "TOS Trades - Combined"
+ *       (respecting the setting that preserves the other account’s rows)
+ *    8. Flush metrics and any issues that were found
+ *
+ *  Called by the menu wrappers:
+ *    - tosTradesImportFromFolderBothAccounts()
+ *    - tosTradesImportFromFolderCurrentAccount()
+ */
 function tosTradesImportFromFolder(folderIdPropKey, Account) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
