@@ -2,10 +2,10 @@
 /**
  * SheetBlanking.js
  *
- * Collection of helper functions to safely clear data from various sheets
- * while preserving header rows.
+ * Collection of helper functions that safely clear data from various sheets
+ * while preserving the header row (row 1).
  *
- * Used heavily during re-imports and pipeline resets so old data doesn't
+ * Used heavily during re-imports and pipeline resets so old data does not
  * mix with new data.
  *
  * Main functions:
@@ -14,10 +14,9 @@
  *   - tosBlankALLTOSSheets()           → one-click clear of all TOS-related sheets
  *   - blankAllSchwabSheets()           → clears Schwab Import + Schwab Mapping
  *   - blankAllPrepSheets()             → clears Import / Helper / Staging
+ *   - clearData()                      → generic helper used by the blank* functions
  *
- * Note: There is a large block of commented-out legacy code below
- * (the old clearSchwabImportExceptHeader that protected formula columns).
- * That code can be safely removed once we're confident it's no longer needed.
+ * All public blanking functions keep row 1 (headers) intact.
  */
 /**
  * TOSTrades and TOSTop and Combined Sheets Blanking
