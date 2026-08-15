@@ -77,9 +77,12 @@ function buildUnifiedImportV3() {
     const accountModeSetting = String(getSetting('accountMode', '') || '').trim().toUpperCase();
     importIssuesSetMetric(ctx, 'AccountModeSetting', accountModeSetting || '(blank)');
 
-    // ----------------------------
-    // 2) Helpers (kept local so this file is self-contained)
-    // ----------------------------
+        // =========================================================================
+    // 2) LOCAL HELPERS
+    //    These small functions stay inside buildUnifiedImportV3 so the file
+    //    remains self-contained. They handle string cleaning, CUSIP normalization,
+    //    sheet reading, and safe cell access.
+    // =========================================================================
 
     function toStr(v) {
       return (v === null || v === undefined) ? '' : String(v);
@@ -154,10 +157,15 @@ function buildUnifiedImportV3() {
       return row.slice(0, 12);
     }
 
-    // ====================== NEW NESTED HELPERS (extracted for readability) ======================
-    // These implement the Fee enrichment rule + Timestamp matching.
-    // They stay inside buildUnifiedImportV3 so they can access the queues (topTradeQueueByKey, etc.).
-    // Called from the main trade loop later in this function.
+        // =========================================================================
+    // NESTED HELPERS – Fee enrichment & timestamp matching
+    //
+    // These helpers stay inside buildUnifiedImportV3 because they need direct
+    // access to the in-memory queues (topTradeQueueByKey, etc.).
+    //
+    // Their job is to match trade legs from TosTrades with the corresponding
+    // fee / amount rows from TosTop using timestamp + symbol + quantity rules.
+    // =========================================================================
 
     function previewTopCandidates(list, limit) {
       const arr = Array.isArray(list) ? list : [];
