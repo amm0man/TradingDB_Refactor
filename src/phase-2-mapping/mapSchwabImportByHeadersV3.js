@@ -1,19 +1,34 @@
-/***************************************
- * mapSchwabImportByHeadersV3
- * Phase 2: "Schwab Import" -> "Schwab Mapping"
+/**
+ * mapSchwabImportByHeadersV3.js
  *
- * Jan 2026 rewrite goals:
- * - NO separate accountMode processing (DT/LT are read per-row from Schwab Import "Account")
- * - NO "Error Log" sheet
- * - NEW "Schwab Mapping Issues" sheet that logs:
- *   When | RunId | Step | Kind | SourceRow | Field | Value | Meta
- * - NEW selectable write mode via ScriptProperties key:
- *   MAPPINGISSUESWRITEMODE = APPENDBOTTOM | APPENDTOP | OVERWRITE
+ * Phase 2 – Mapping
  *
- * IMPORTANT sequencing rule:
- * - "Time Stamp" (import) -> "Trade Time Stamp" (mapping) must be stored as a real DateTime.
- * - Date/Time columns are readable helpers only.
- ***************************************/
+ * High-level job:
+ *   Read the canonical "Schwab Import" sheet (produced by Phase 1)
+ *   and write a fully expanded, header-driven table into "Schwab Mapping".
+ *
+ * Key responsibilities:
+ *   - Map every import column into the full Schwab Mapping schema
+ *   - Tag Account Actions and Corporate Actions (both can be present on one row)
+ *   - Resolve tickers for symbol-change and TDA-era corporate-action rows
+ *   - Normalize Strategy Type (baseline + multi-leg post-processors)
+ *   - Propagate Net Amount across spread legs when Schwab only supplied it once
+ *   - Sort by Trade Time Stamp (authoritative sequencing key)
+ *   - Log all problems and metrics to "Schwab Mapping Issues"
+ *
+ * Important design rules still in force:
+ *   - No separate accountMode processing — Account is read per-row from Schwab Import
+ *   - "Trade Time Stamp" must be a real Date object (Date/Time columns are display helpers only)
+ *   - MARK TO THE MARKET rows are dropped silently (configurable)
+ *
+ * Related files:
+ *   - BuildUnifiedImportV3.js          (Phase 1 – produces Schwab Import)
+ *   - ImportIssues.js                  (shared logging engine; mappingIssues* wrappers)
+ *   - DBTools.js                       (Phase 3 – consumes Schwab Mapping)
+ *   - SettingsService.js
+ *
+ * Current focus: clear high-level documentation before any structural refactoring.
+ */
 
 // =========================
 // Sheet names (exact tabs)
@@ -151,9 +166,22 @@ const SCHWAB_MAPPING_SCOPE_HEADERS = [
   "Transfer Type",
 ];
 
-// =========================
-// Entry point
-// =========================
+// =========================================================================
+// MAIN ENTRY POINT
+// =========================================================================
+/**
+ * mapSchwabImportByHeadersV3()
+ *
+ * Called from the DB Tools menu (and from the full pipeline).
+ *
+ * High-level flow:
+ *   1. Start a Mapping Issues run context
+ *   2. Read Schwab Import + supporting sheets (Cash Map, CusipMap, Corp Action Map…)
+ *   3. Transform every import row into a Schwab Mapping row (main loop)
+ *   4. Run post-processors (Strategy Type, Net Amount, missing-amount warnings)
+ *   5. Sort by Trade Time Stamp
+ *   6. Write the result to "Schwab Mapping" and flush metrics/issues
+ */
 function mapSchwabImportByHeadersV3() {
   const ss = SpreadsheetApp.getActive();
   const tz = ss.getSpreadsheetTimeZone();
@@ -189,6 +217,17 @@ function mapSchwabImportByHeadersV3() {
   // These help you quickly verify that keyword tagging is actually working.
   const accountActionCounts = {}; // tag -> count
   const corpActionCounts = {}; // tag -> count
+
+  // =========================================================================
+  // HIGH-LEVEL ROADMAP OF THIS FUNCTION
+  //
+  //   A) Setup          – sheets, header maps, keyword rules, Cash Map
+  //   B) Main loop      – one import row → one mapping row (tagging + field fill)
+  //   C) Post-processors– Strategy Type (spread groups + position tracker),
+  //                       Net Amount propagation, missing-amount warnings
+  //   D) Sort + Write   – authoritative Trade Time Stamp order → Schwab Mapping
+  //   E) Metrics/Flush  – counters + Mapping Issues sheet
+  // =========================================================================
 
   // Wrap everything so that even if something throws, you still get an ERROR issue row + metrics flushed.
   try {
@@ -295,9 +334,12 @@ function mapSchwabImportByHeadersV3() {
     // - spreadRaw: raw Spread label from Schwab Import (used later for group-based strategy normalization)
     const outItems = [];
 
-    // =========================
-    // MAIN TRANSFORM LOOP
-    // =========================
+    // =========================================================================
+    // B) MAIN TRANSFORM LOOP
+    //    One Schwab Import row → one Schwab Mapping row.
+    //    Handles early drops (MARK TO THE MARKET), tagging, trade vs non-trade
+    //    branching, symbol-change special cases, and baseline Strategy Type.
+    // =========================================================================
     // Corp action types that legitimately have no underlying ticker.
     // These are pure cash/interest transactions — do NOT attempt description-based extraction for them.
     // All other corp action types (splits, mergers, dividends, reorganizations, transfers, etc.)
@@ -575,9 +617,11 @@ function mapSchwabImportByHeadersV3() {
       mapped[col(mappingHeaderMap, "Corporate Actions")] = corpActionTag || "";
       mapped[col(mappingHeaderMap, "Account Actions")] = accountActionTag || "";
 
-      // =========================
+      // =========================================================================
       // Trade vs non-trade mapping
-      // =========================
+      //    Trade rows get Quantity / Entry Price / Signed Quantity / Action, etc.
+      //    Non-trade rows (cash, corp actions, journals…) get the lighter mapping.
+      // =========================================================================
       if (isTrade) {
         tradeRowCount++;
 
@@ -956,10 +1000,11 @@ function mapSchwabImportByHeadersV3() {
       mappingHeaderMap,
       ctx,
     );
-    // =========================
-    // Sort by Trade Time Stamp (authoritative sequencing key)
-    // Stable tie-breaker: original Schwab Import row order within identical timestamps.
-    // =========================
+    // =========================================================================
+    // D) SORT BY TRADE TIME STAMP
+    //    Authoritative sequencing key for everything downstream.
+    //    Stable tie-breaker: original Schwab Import row number when timestamps match.
+    // =========================================================================
     sortMappingRowsByTradeTimeStamp(outItems, mappingHeaderMap);
 
     // Convert to 2D values array for writing
@@ -1077,9 +1122,11 @@ function writeMappingRowsV3(mappingSheet, mappingHeaders, outRows) {
   }
 }
 
-// =====================================================
-// Account Actions tagging (DT/LT combined) helpers
-// =====================================================
+// =========================================================================
+// ACCOUNT ACTIONS TAGGING HELPERS
+//   Keyword rules + directional journal logic.
+//   Used inside the main loop to fill the "Account Actions" column.
+// =========================================================================
 
 /**
  * Base keyword rules for Account Actions where the tag is NOT dependent on
@@ -1537,10 +1584,12 @@ function extractCallPut(symbolRaw, desc) {
   return "";
 }
 
-// =============================================================================
-// Corp Action Map helpers — Phase 2 ticker resolution for TDA-era corp action rows
-// =============================================================================
-
+// =========================================================================
+// CORP ACTION MAP + SYMBOL-CHANGE HELPERS
+//   Resolve tickers for TDA-era corporate-action rows and for "Symbol Change
+//   from X to Y" journals. Phase 2 is the single place that decides the
+//   canonical Ticker for these rows so Phase 3 can keep blocks continuous.
+// =========================================================================
 // Symbol / ticker change helpers
 // WHY
 // Schwab emits symbol changes as JRN rows like:
@@ -2554,9 +2603,13 @@ function auditSchwabMappingV3() {
   );
 }
 
-// =====================================================
-// Strategy / spread post-processing (unchanged logic)
-// =====================================================
+// =========================================================================
+// STRATEGY TYPE POST-PROCESSORS
+//   1. normalizeStrategyType               – single-row baseline
+//   2. postProcessStrategyTypeBySpreadGroups – force same label on all legs
+//   3. postProcessStrategyTypeByPositionTrackerV3 – FIFO close-row inheritance
+//   4. postProcessNetAmountBySpreadGroups  – copy Net Amount across legs
+// =========================================================================
 
 function normalizeStrategyType(
   spreadRaw,
