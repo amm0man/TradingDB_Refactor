@@ -1308,9 +1308,19 @@ function tosTopParseDateTimeMinute(dateStr, hhmmOrHhmmss) {
 
 
 /** ======================================================================
- *  Push Combined -> TosTrades (with Account)
- *  ====================================================================== */
-
+ *  PUSH: TOS Trades - Combined → TosTrades
+ *  ======================================================================
+ *
+ *  pushTosTradesCombinedToTosTrades()
+ *
+ *  Takes the data that was collected in "TOS Trades - Combined" and writes
+ *  the selected columns into the working sheet "TosTrades".
+ *
+ *  - Asks the user for confirmation before overwriting
+ *  - Uses a script lock
+ *  - Logs metrics and any problems to Import Issues
+ *  - Called by pushTosCombinedToBoth() and by the menu
+ */
 function pushTosTradesCombinedToTosTrades() {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1474,9 +1484,19 @@ function pushTosTradesCombinedToTosTrades() {
 }
 
 /** ======================================================================
- *  Push Combined -> TosTop (with Account)
- *  ====================================================================== */
-
+ *  PUSH: TOS Top - Combined → TosTop
+ *  ======================================================================
+ *
+ *  pushTosTopCombinedToTosTop()
+ *
+ *  Takes the data that was collected in "TOS Top - Combined" and writes
+ *  the selected columns into the working sheet "TosTop".
+ *
+ *  - Asks the user for confirmation before overwriting
+ *  - Uses a script lock
+ *  - Logs metrics and any problems to Import Issues
+ *  - Called by pushTosCombinedToBoth() and by the menu
+ */
 function pushTosTopCombinedToTosTop() {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
