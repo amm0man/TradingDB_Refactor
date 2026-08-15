@@ -1,24 +1,22 @@
 /**
- * CusipHelpers.js
+ * Helpers.js
  *
- * Shared CUSIP normalization and detection helpers used by Phase 1 and Phase 2.
+ * Shared pure utility helpers used across phases.
  *
- * Why shared:
- *   Both BuildUnifiedImportV3 and mapSchwabImportByHeadersV3 need the same
- *   stable rules for turning raw sheet values into CUSIP lookup keys and for
- *   deciding whether a token "looks like" a CUSIP.
+ * This file is the home for small, reusable functions that don't own a
+ * whole subsystem (unlike ImportIssues, SheetBlanking, or SettingsService).
  *
- * Design notes:
- *   - normalizeCusip handles the common Sheets problem where a CUSIP arrives
- *     as a number (leading zeros and letters would otherwise be lost).
- *   - looksLikeCusip requires exactly 9 [0-9A-Z] characters AND at least one
- *     digit (pure letter strings are not treated as CUSIPs).
+ * Current contents:
+ *   - CUSIP normalization / detection
  *
- * Related:
- *   - BuildUnifiedImportV3.js
- *   - mapSchwabImportByHeadersV3.js (also has normalizeRenameIdentifierV3 for
- *     general ticker-like IDs that must preserve characters such as "/")
+ * Add new helper groups below with a clear section banner.
+ * If this file later becomes large or mixed, we can split by topic.
  */
+
+// =========================================================================
+// CUSIP HELPERS
+//   Used by Phase 1 (BuildUnifiedImportV3) and Phase 2 (mapSchwabImportByHeadersV3).
+// =========================================================================
 
 /**
  * Turn any raw value into a stable CUSIP lookup key.
@@ -43,6 +41,8 @@ function looksLikeCusip(v) {
   return /^[0-9A-Z]{9}$/.test(s) && /[0-9]/.test(s);
 }
 
+
+
 // Debug test after moving CUSIP to use this file
 function testCusipHelpers() {
   const samples = [
@@ -66,3 +66,7 @@ function testCusipHelpers() {
     );
   });
 }
+
+// =========================================================================
+// (Future groups will go here, e.g. NUMBER HELPERS, UI HELPERS, etc.)
+// =========================================================================
