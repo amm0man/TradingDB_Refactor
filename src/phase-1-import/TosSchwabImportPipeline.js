@@ -1,52 +1,34 @@
 /**
- * @file TosSchwabImportPipeline.js
- * @description Main import pipeline for bringing trade data from thinkorswim (TOS)
- *              and Schwab CSV exports into the Trading Database.
- *              This is a core Phase 1 (Import) file in the 3-phase architecture.
+ * TosSchwabImportPipeline.js
  *
- * Responsibilities:
- * - Orchestrates the full import workflow triggered from the custom menu
- * - Reads raw TOS and Schwab trade files/folders
- * - Parses and normalizes trade data (including multi-leg options spreads)
- * - Coordinates writing to staging/import sheets via helper functions
- * - Logs issues and exceptions for later review (works with ImportIssues.js)
- * - Respects debug/alert toggles from SettingsService.js
+ * Core Phase 1 import pipeline.
+ * Brings trade data from thinkorswim (TOS) CSV exports into the Trading Database.
  *
- * This file historically contained a large amount of logic. Our current goal
- * is to add clear, verbose comments so the flow becomes easier to understand
- * before we consider any structural refactoring (function extraction, duplication removal, etc.).
+ * High-level flow:
+ *   Drive folders (TosTrades / TosTop)
+ *     → "TOS Trades - Combined" + "TOS Top - Combined"
+ *     → "TosTrades" + "TosTop"
+ *     → later handed off to Schwab Mapping / Phase 2
  *
- * Related files (Phase 1):
- * - shared/SettingsService.js          → configuration & debug flags
- * - phase-1-import/ImportIssues.js     → issue logging during import
- * - phase-1-import/TosSheetWriteHelpers.js → sheet writing helpers
- * - phase-1-import/MapSchwabImportByHeadersV3.js (and similar mapping files)
+ * Key responsibilities:
+ *   - Folder selection and CSV import (single account or both LT+DT)
+ *   - Parsing and normalizing TOS trade / top-of-book data
+ *   - Writing to Combined sheets while preserving the other account’s rows
+ *   - Pushing Combined data into the working TosTrades / TosTop sheets
+ *   - ET → CT time correction
+ *   - Issue logging via ImportIssues.js
+ *   - Debug alerts controlled by SettingsService.js
  *
- * Notes for future work:
- * - All changes in this refactor session are verified with `clasp push`.
- * - We are intentionally starting with documentation only (low risk).
- * - Later we will look for opportunities to consolidate repeated helper logic.
+ * This is one of the largest files in the project (~1,700 lines).
+ * Current focus: improve readability with clear comments before any
+ * structural refactoring.
  *
- * @refactor-session June 23, 2026
+ * Related files:
+ *   - SettingsService.js
+ *   - ImportIssues.js
+ *   - TosSheetWriteHelpers.js
+ *   - BuildUnifiedImportV3.js (next stage after this pipeline)
  */
-/**
- * TosSchwabImportPipeline.gs
- *
- * This file is a full replacement pipeline for:
- * CSV files in Drive folders
- *   -> "TOS Trades - Combined" + "TOS Top - Combined"
- *   -> "TosTrades" + "TosTop"
- *
- * Key requirements implemented:
- * - No underscore-suffix function names (older pattern removed)
- * - Account is written into both Combined sheets AND both TosTop/TosTrades
- * - LockService is used to prevent overlapping runs
- * - All steps write to ONE issues sheet: "Import Issues" (via ImportIssues.gs)
- * - Trades parser uses "blank row then EQUITIES in column A" stop rule + hard stops
- * - Combined sheets store TosTop TIME as HHmmss text for second-precision timestamps
- * - Combined sheets store Trades Exec Time in a TimeRaw column to preserve the original text
-*/
-
 
 /** ---- Configuration ---- */
 const tosConfig = {
