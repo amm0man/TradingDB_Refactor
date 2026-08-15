@@ -44,32 +44,15 @@ const tosConfig = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ET → CT DST-aware offset helpers
+// ET → CT time correction
 //
-// WHY THIS EXISTS:
-//   TOS Account Statement exports always write timestamps in Eastern Time (ET),
-//   regardless of where you live. Users in Central Time (CT) are UTC-6 in winter
-//   (CST) and UTC-5 in summer (CDT). Eastern Time is UTC-5 in winter (EST) and
-//   UTC-4 in summer (EDT). The difference is:
-//     - Winter (CST vs EST): CT = ET − 1 hour → add +1 hour to correct
-//     - Summer (CDT vs EDT): CT = ET − 0 hours → add +0 hours (no correction)
-//   DST in the US begins the 2nd Sunday of March at 2:00 AM and ends the
-//   1st Sunday of November at 2:00 AM. All market-hours trades occur between
-//   8:30 AM and 3:00 PM CT and never straddle the 2 AM switchover, so
-//   checking by date is safe and accurate.
+// TOS Account Statement exports always write timestamps in Eastern Time (ET).
+// This project runs in Central Time (CT). CT is always exactly 1 hour behind ET
+// (both zones observe US DST at the same time), so we simply add +1 hour.
 //
-// IMPORTANT: This correction applies to ALL years, past and future, because
-//   the ET-export behavior has been consistent across TDA and Schwab-era TOS.
-//   The 2022 vs 2025 discrepancy you observed is purely a DST phenomenon:
-//   winter trades appear 1 hour early, summer trades appear correct.
+// These helpers convert the ET timestamps into correct CT values before writing
+// them into the Combined sheets.
 // ─────────────────────────────────────────────────────────────────────────────
-/**
- * Returns the milliseconds to ADD to an ET-stamped Date to convert it to CT.
- * Result is either 0 (summer/DST active) or 3,600,000 (winter/standard time).
- * @param {Date} dateInEt - A Date object whose hour values reflect Eastern Time.
- * @returns {number} Milliseconds offset (0 or 3600000).
- */
-// AFTER — correct, CT is always UTC-1 behind ET, every day of the year:
 function tosEtToCtOffsetMs(dateInEt) {
   // Central Time (CT) is always exactly 1 hour behind Eastern Time (ET),
   // year-round. Both zones observe US DST simultaneously, so the offset
@@ -244,9 +227,13 @@ function tosSetFolderId(title, propKey) {
 // Menu / wrapper functions
 // -----------------------------------------------------------------------------
 
-// ------------------------------
-// BOTH accounts menu actions
-// ------------------------------
+// =============================================================================
+// MENU ENTRY POINTS (called directly from the DB Tools menu)
+// =============================================================================
+
+// ----- BOTH accounts -----
+// Runs the import for DT and then LT so both accounts end up in the Combined sheets.
+
 function tosTradesImportFromFolderBothAccounts() {
   tosTradesImportFromFolder(tosProps.tradesFolderIdDT, 'DT');
   tosTradesImportFromFolder(tosProps.tradesFolderIdLT, 'LT');
@@ -257,7 +244,11 @@ function tosTopImportFromFolderBothAccounts() {
   tosTopImportFromFolder(tosProps.topFolderIdLT, 'LT');
 }
 
-// One-button: Drive CSVs -> Combined -> TosTop/TosTrades -> Schwab Import (both accounts)
+/**
+ * One-button full pipeline for both accounts:
+ * Drive CSVs → Combined sheets → TosTrades/TosTop → BuildUnifiedImportV3
+ * Also sets a shared RunId so every step can be filtered together in Import Issues.
+ */
 function tosRunFullTosToSchwabImportBothAccounts() {
   // One pipeline-wide RunId so ALL steps can be filtered together in "Import Issues".
   const pipelineRunId = new Date().toISOString();
@@ -274,7 +265,8 @@ function tosRunFullTosToSchwabImportBothAccounts() {
   }
 }
 
-
+// ----- Current account only -----
+// Uses the Account Mode setting (DT or LT) to decide which folder to read.
 
 function tosTradesImportFromFolderCurrentAccount() {
   const Account = tosGetCurrentAccount(); // "DT" or "LT"
@@ -288,7 +280,10 @@ function tosTopImportFromFolderCurrentAccount() {
   tosTopImportFromFolder(folderKey, Account);
 }
 
-
+/**
+ * Pushes both Combined sheets into the working TosTrades and TosTop sheets.
+ * Uses a script lock so two runs cannot overlap.
+ */
 function pushTosCombinedToBoth() {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -296,7 +291,7 @@ function pushTosCombinedToBoth() {
     pushTosTradesCombinedToTosTrades();
     pushTosTopCombinedToTosTop();
   } finally {
-    lock.releaseLock();   // ✅ always runs — even if an inner function throws
+    lock.releaseLock();   // always runs — even if an inner function throws
   }
 }
 
