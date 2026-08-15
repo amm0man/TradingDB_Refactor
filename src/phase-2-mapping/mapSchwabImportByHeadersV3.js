@@ -1625,19 +1625,23 @@ function buildCusipMapFromSheetV3(ss) {
 
   const out = {};
   for (let r = 1; r < vals.length; r++) {
-    const rawCusip = String(vals[r][cusipIdx] || "")
-      .trim()
-      .toUpperCase()
-      .replace(/[^0-9A-Z]/g, "");
+    // Force string first so Sheets number-coercion cannot drop leading zeros / letters.
+    const rawCusip = normalizeCusip(String(vals[r][cusipIdx] ?? "").trim());
     const rawSym = String(vals[r][symIdx] || "")
       .trim()
       .toUpperCase();
     if (!rawCusip || !rawSym) continue;
+    if (!looksLikeCusip(rawCusip)) continue;
     out[rawCusip] = rawSym;
   }
   return out;
 }
 
+/**
+ * Normalize a rename-side identifier (ticker or CUSIP-like token).
+ * Preserves characters such as "/" that appear in real tickers (e.g. LUR/CN).
+ * For pure CUSIP key work, use normalizeCusip() from CusipHelpers.js instead.
+ */
 function normalizeRenameIdentifierV3(v) {
   return String(v || "")
     .trim()
@@ -1645,18 +1649,18 @@ function normalizeRenameIdentifierV3(v) {
     .replace(/\s+/g, "");
 }
 
+/** Thin wrapper – prefer the shared looksLikeCusip() going forward. */
 function looksLikeCusipIdentifierV3(v) {
-  const s = normalizeRenameIdentifierV3(v).replace(/[^0-9A-Z]/g, "");
-  return /^[0-9A-Z]{9}$/.test(s) && /[0-9]/.test(s);
+  return looksLikeCusip(v);
 }
 
 function resolveRenameIdentifierToTickerV3(rawId, cusipMap) {
   const id = normalizeRenameIdentifierV3(rawId);
   if (!id) return "";
 
-  // If it looks like a CUSIP, try CusipMap first.
-  const cusipKey = id.replace(/[^0-9A-Z]/g, "");
-  if (looksLikeCusipIdentifierV3(cusipKey) && cusipMap && cusipMap[cusipKey]) {
+  // If it looks like a CUSIP, try CusipMap first (shared normalizer).
+  const cusipKey = normalizeCusip(id);
+  if (looksLikeCusip(cusipKey) && cusipMap && cusipMap[cusipKey]) {
     return String(cusipMap[cusipKey]).trim().toUpperCase();
   }
 

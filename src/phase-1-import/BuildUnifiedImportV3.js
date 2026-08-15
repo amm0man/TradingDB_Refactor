@@ -97,20 +97,6 @@ function buildUnifiedImportV3() {
       return toStr(s).trim().toLowerCase().replace(/\s+/g, " ");
     }
 
-    // Normalize any CUSIP-ish value into a stable lookup key
-    function normalizeCusip(v) {
-      if (typeof v === "number" && isFinite(v))
-        return String(Math.trunc(v)).padStart(9, "0");
-      return toStr(v)
-        .toUpperCase()
-        .replace(/[^0-9A-Z]/g, "");
-    }
-
-    function looksLikeCusip(v) {
-      const s = normalizeCusip(v);
-      return /^[0-9A-Z]{9}$/.test(s);
-    }
-
     // Loose find-by-name: trims and lowercases so "CusipMap " still works.
     function getSheetByNameLoose(name) {
       const target = String(name || "")
