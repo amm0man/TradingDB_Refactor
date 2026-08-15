@@ -1,58 +1,31 @@
-
 /**
- * @file MapSchwabImportByHeadersV3.js
- * @description Phase 2 (Mapping) — Standardizes Schwab CSV import data by dynamically
- *              reading and mapping column headers to the project's expected schema.
+ * BuildUnifiedImportV3.js
  *
- * This file is responsible for taking raw Schwab trade data (imported in Phase 1)
- * and transforming it into a consistent, predictable format that downstream
- * processing (Phase 3) and the Master sheet can rely on.
+ * Core Phase 1 function that builds the canonical "Schwab Import" sheet.
  *
- * Key characteristics:
- * - Header-driven mapping (more robust than fixed column positions)
- * - Handles variations in Schwab export formats over time (V3 = latest iteration)
- * - Prepares data for unified import pipelines and multi-leg spread handling
- * - Works closely with TosSchwabImportPipeline.js and other Phase 1 import logic
+ * High-level job:
+ *   Merge data from:
+ *     - TosTrades  (trade structure / legs / symbols authority)
+ *     - TosTop     (fees, amounts, cash movements authority)
+ *   into the single sheet that Phase 2 (Mapping) expects: "Schwab Import".
  *
- * This approach reduces fragility when Schwab occasionally changes their CSV layout.
+ * Key responsibilities:
+ *   - Combine both accounts (DT + LT) in one pass
+ *   - Match trades to top-of-book rows (including CUSIP / symbol change handling)
+ *   - Emit corporate-action and cash rows when needed
+ *   - Write a clean, consistent table into "Schwab Import"
+ *   - Log metrics and problems via ImportIssues.js
+ *
+ * This is currently the largest file in the project.
+ * Current focus: correct the header and add clear high-level documentation
+ * before any structural refactoring.
  *
  * Related files:
- * - phase-1-import/TosSchwabImportPipeline.js
- * - phase-1-import/ImportIssues.js (for logging mapping problems)
- * - shared/SettingsService.js (for any mapping-related configuration)
- *
- * Future refactor notes:
- * - Once well-commented, we can evaluate whether any mapping logic here
- *   could be consolidated with similar logic elsewhere.
- *
- * @refactor-session June 23, 2026
+ *   - TosSchwabImportPipeline.js   (produces TosTrades / TosTop)
+ *   - ImportIssues.js
+ *   - SettingsService.js
+ *   - MapSchwabImportByHeadersV3.js (Phase 2 – runs after this)
  */
-/**
- * debugCorpActionStockEmitterV3() has been moved to:
- * src/debug/debugBuildUnifiedImport.js
- *
- * This was done on June 23, 2026 to reduce the size of the core mapping file
- * and keep standalone debug utilities organized in one place.
- *
- * You can safely delete this comment block once you're comfortable with the new location.
- */
-
-
-/**row[
- * buildUnifiedImportV3
- *
- * Purpose:
- * - Merge "TosTrades" (trade structure authority) + "TosTop" (fees/amount authority)
- *   into the canonical sheet: "Schwab Import".
- *
- * Requirements:
- * - "TosTop" and "TosTrades" must include an "Account" column (DT/LT).
- *
- * Logging:
- * - Uses ImportIssues.gs ("Import Issues" sheet) for metrics and warnings/errors.
- */
-
-
 
 // UI-safe alert helper.
 // - Works when run from spreadsheet UI (menus).
