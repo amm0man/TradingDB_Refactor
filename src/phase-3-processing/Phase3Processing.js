@@ -1,16 +1,20 @@
 /**
- * DBTools.js
+ * Phase3Processing.js
  *
- * Phase 3 processing – core logic that turns Schwab Mapping into the final
- * Staging / Master data.
+ * Phase 3 – Core processing pipeline.
  *
- * Contains:
- *   - refreshAllScripts()                 → orchestrates the three Phase 3 steps
- *   - copyMappingToImportByHeaders()      → Schwab Mapping → Import
- *   - validateAndCleanImportToHelperV3()  → validation + timestamps → Helper
- *   - populateStagingWithBlockLogicV3()   → core block / position logic → Staging
- *   - appendStagingToMaster(), backupMasterSheet(), clearMasterExceptHeader()
- *   - Supporting helpers (parseTradeTimeStamp, resolveLiveSpreadGroupId, etc.)
+ * High-level job:
+ *   Take the clean "Schwab Mapping" sheet (from Phase 2) and turn it into
+ *   the final Staging data that can be appended to Master.
+ *
+ * Pipeline steps (also run together by refreshAllScripts):
+ *   1. copyMappingToImportByHeaders()     → Schwab Mapping → Import
+ *   2. validateAndCleanImportToHelperV3() → Import → Helper (validation + timestamps)
+ *   3. populateStagingWithBlockLogicV3()  → Helper → Staging (block / position logic)
+ *
+ * Also contains:
+ *   - Master utilities (append, backup, clear)
+ *   - Supporting helpers used by the three steps above
  *
  * The custom menu (onOpen) now lives in Menu.js.
  *
@@ -21,14 +25,14 @@
  *   - ImportIssues.js / SheetBlanking.js (shared)
  */
 
-
 /**  Helper functions
  * 
  * 
 */
 
-// For DB Log
-/* =============== Log function for scripts that will output to a log  ============= */
+// =========================================================================
+// SMALL SHARED HELPERS (used by the Phase 3 steps below)
+// =========================================================================
 function logAction(action, details) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let logSheet = ss.getSheetByName('DB_log');
@@ -65,8 +69,11 @@ function ensureValidationErrorSheet() {
  * 
  */
 
-// Run Schwab Mapping -> Staging
-
+// =========================================================================
+// ORCHESTRATOR
+//   Runs the three Phase 3 steps under one shared RunId so all Staging Issues
+//   rows from a full refresh can be filtered together.
+// =========================================================================
 function refreshAllScripts() {
   // Set a stable RunId so all three Stage 3 steps share one RunId in Staging Issues.
   // The importIssuesStart / stagingIssuesStart functions read this key automatically.
@@ -95,7 +102,12 @@ function refreshAllScripts() {
   }
 }
 
-// Move Schwab Mapping to Import by Headers
+// =========================================================================
+// STEP 1: copyMappingToImportByHeaders
+//   Copies the current "Schwab Mapping" sheet into the "Import" sheet
+//   using header-name matching (order-independent).
+//   Also does early Strategy Type / settlement-row handling that Phase 3 needs.
+// =========================================================================
 function copyMappingToImportByHeaders() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -803,6 +815,11 @@ function copyMappingToImportByHeaders() {
 // component ("HH:mm:ss" or "HHmmss") so future Schwab format changes won't
 // silently break anything.
 // ─────────────────────────────────────────────────────────────────────────────
+// =========================================================================
+// HELPER: parseTradeTimeStamp
+//   Builds a reliable Date object from Trade Time Stamp (preferred) or from
+//   the separate Trade Date + Trade Time columns as fallback.
+// =========================================================================
 function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
   let fullTimestamp = null;
 
@@ -869,6 +886,12 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
  *   PRIORITY 2 — parseTradeTimeStamp now handles "HHmm" (no colon) as well as
  *                "HH:mm", matching the format written by mapSchwabImportByHeadersV3.
  */
+// =========================================================================
+// STEP 2: validateAndCleanImportToHelperV3
+//   Runs immediately after copyMappingToImportByHeaders.
+//   Cleans data, forces full timestamps, and writes the pristine result
+//   into the "Helper" sheet that the block logic will read.
+// =========================================================================
 function validateAndCleanImportToHelperV3() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const importSheet = ss.getSheetByName('Import');
@@ -1283,6 +1306,11 @@ function validateAndCleanImportToHelperV3() {
 //   spreadRangeMap — the range map built in Sub-pass B
 //   blocks         — the live block-state object from Step 4 (passed by reference)
 // ─────────────────────────────────────────────────────────────────────────────
+// =========================================================================
+// HELPER: resolveLiveSpreadGroupId
+//   Looks up the currently open spread-group ID for a given account/ticker/
+//   expiration/strategy so closing legs can inherit the correct group.
+// =========================================================================
 function resolveLiveSpreadGroupId(acct, ticker, expStr, strat, strike, spreadRangeMap, blocks) {
   const rangeKey = `${acct}|${ticker}|${expStr}|${strat}`;
   const rangeGroups = (spreadRangeMap[rangeKey] || []);
@@ -1310,6 +1338,13 @@ function resolveLiveSpreadGroupId(acct, ticker, expStr, strat, strike, spreadRan
  * FIXED: Sequential same-ticker spreads sharing a boundary strike now resolve
  *        correctly via resolveLiveSpreadGroupId() in the main block loop.
  */
+// =========================================================================
+// STEP 3: populateStagingWithBlockLogicV3
+//   Core Phase 3 engine.
+//   Reads Helper, builds open/close blocks, assigns Trade Group IDs /
+//   Position IDs / Spread Group IDs, handles symbol changes, exercises,
+//   assignments, and writes the final result to the "Staging" sheet.
+// =========================================================================
 function populateStagingWithBlockLogicV3() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const helperSheet = ss.getSheetByName('Helper');
@@ -2337,11 +2372,10 @@ if (action === 'SYMBOL CHANGE') {
   }
 }
 
-/*
--------------------------
-Append Master from Staging
--------------------------
-*/
+// =========================================================================
+// MASTER UTILITIES
+//   Final write and safety tools that operate on the Master sheet.
+// =========================================================================
 function appendStagingToMaster() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const master = ss.getSheetByName("Master");
