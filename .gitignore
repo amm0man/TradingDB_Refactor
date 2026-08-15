@@ -1,5 +1,4 @@
-@"
-# clasp authentication tokens — NEVER commit this file
+﻿# clasp authentication tokens — NEVER commit this file
 .clasprc.json
 
 # Node modules (if you ever add dependencies later)
@@ -17,4 +16,3 @@ Thumbs.db
 *.log
 *.bak
 *~
-"@ | Out-File -FilePath .gitignore -Encoding utf8
