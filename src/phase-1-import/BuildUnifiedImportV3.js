@@ -999,9 +999,13 @@ function buildUnifiedImportV3() {
       return (s + " " + expStr + " " + strikeStr + " " + cp).trim();
     }
 
-    // ----------------------------
-    // 3 Read inputs (ALL accounts)
-    // ----------------------------
+    // =========================================================================
+    // 3) READ INPUTS (ALL ACCOUNTS)
+    //    Load the two working sheets that the rest of this function depends on:
+    //      • TosTop    → fees, amounts, cash, corporate actions (source of truth for money)
+    //      • TosTrades → trade legs / symbols / structure (source of truth for what was traded)
+    //    Both accounts (DT + LT) are kept together; we no longer filter by account mode here.
+    // =========================================================================
     const topSh = mustGetSheet("TosTop");
     const tradesSh = mustGetSheet("TosTrades");
 
@@ -1957,7 +1961,7 @@ function buildUnifiedImportV3() {
       };
     }
 
-        // =========================================================================
+    // =========================================================================
     // 5) BUILD ENRICHMENT QUEUES FROM TosTop
     //    Takes the TRD (trade) rows from TosTop and builds in-memory queues
     //    keyed by timestamp / symbol / quantity so we can later attach the
@@ -2203,7 +2207,7 @@ function buildUnifiedImportV3() {
     // The enrichment helpers were extracted above as nested functions (pullTopTradeEnrichment and pullTopTradeEnrichmentButterfly).
     // They are now much easier to read and maintain.
 
-      // =========================================================================
+    // =========================================================================
     // 6) CONVERT TosTrades ROWS → UNIFIED TRADE ROWS
     //    This is the main matching loop. Each trade leg from TosTrades is
     //    paired with the best matching fee/amount row from the queues built
@@ -3848,7 +3852,7 @@ function buildUnifiedImportV3() {
 
     applyFeesToTopLegRuleB(unifiedTrades);
 
-       // =========================================================================
+    // =========================================================================
     // 7) CONVERT TosTop NON-TRADE ROWS → UNIFIED NON-TRADE ROWS
     //    Handles everything in TosTop that is NOT a regular trade (TYPE != TRD):
     //    cash movements, fees, dividends, transfers, corporate actions, etc.
@@ -4486,9 +4490,12 @@ function buildUnifiedImportV3() {
         }
       });
 
-    // ----------------------------
-    // 8) Combine + sort by Timestamp (authoritative sequencing)
-    // ----------------------------
+    // =========================================================================
+    // 8) COMBINE + SORT BY TIMESTAMP
+    //    Merge the trade rows (from step 6) and the non-trade rows (from step 7),
+    //    then sort everything by Timestamp so downstream Phase 2 / Phase 3 logic
+    //    sees a single chronological sequence. Multi-leg groups stay adjacent.
+    // =========================================================================
     const all = unifiedTrades.concat(unifiedNonTrades);
 
     //  output ordering inside a multi-leg trade group so legs stay adjacent.
@@ -4554,11 +4561,12 @@ function buildUnifiedImportV3() {
       return as.localeCompare(bs);
     });
 
-    // ----------------------------
-    // 9  Assemble 2-D output array (header row + one row per unified entry)
-    //    Must match the canonical Schwab Import header order exactly.
-    //    all[] holds named-property objects; setValues() requires a 2-D array.
-    // ----------------------------
+    // =========================================================================
+    // 9) ASSEMBLE 2-D OUTPUT ARRAY + WRITE TO "Schwab Import"
+    //    Convert the named-property objects in all[] into a plain 2-D array that
+    //    matches the canonical Schwab Import header order exactly, then write it.
+    //    Timestamp is the authoritative source for Date and Time columns.
+    // =========================================================================
     const outSh = mustGetSheet("Schwab Import");
     const prevLastRow = outSh.getLastRow();
     const prevLastCol = outSh.getLastColumn();
@@ -4745,9 +4753,12 @@ function buildUnifiedImportV3() {
         .clearContent();
     }
 
-    // ----------------------------
-    // 10) Issues + success message
-    // ----------------------------
+    // =========================================================================
+    // 10) METRICS, FLUSH ISSUES, AND SUCCESS MESSAGE
+    //    Record how many rows were written, how many enrichment matches failed,
+    //    queue health, and retagging stats, then flush the Import Issues log
+    //    and show a short UI summary.
+    // =========================================================================
     importIssuesSetMetric(ctx, "RowsWrittenExclHeader", all.length);
     importIssuesSetMetric(ctx, "UnifiedTrades", unifiedTrades.length);
     importIssuesSetMetric(ctx, "UnifiedNonTrades", unifiedNonTrades.length);
