@@ -1,5 +1,20 @@
-/** ========== MENU BUILDER ========== Updated 4/25/26   
-*/
+/**
+ * DBTools.js
+ *
+ * Main Phase 3 processing file + the custom "DB Tools" menu.
+ *
+ * Contains:
+ *   - onOpen()                  → builds the entire custom menu system
+ *   - validateAndCleanImportToHelperV3()
+ *   - populateStagingWithBlockLogicV3()   (core block / position logic)
+ *   - copyMappingToImportByHeaders()
+ *   - appendStagingToMaster(), backupMasterSheet(), clearMasterExceptHeader()
+ *   - Various helpers (logAction, getValByHeader, etc.)
+ *
+ * This is currently the largest and most central file in the project.
+ * Future work: extract the menu into its own file and break the large
+ * processing functions into smaller, focused helpers.
+ */
 
 
 function onOpen() {
@@ -2441,12 +2456,19 @@ function backupMasterSheet() {
   m.copyTo(ss).setName(name);
   //logAction('BACKUP MASTER',name);
 }
-// Clear master
+/**
+ * Clears all data rows from the Master sheet while keeping the header row.
+ * Note: Sheet name is case-sensitive — must be exactly "Master".
+ */
 function clearMasterExceptHeader() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("master");
-  var lastRow = sheet.getLastRow();
-  var lastCol = sheet.getLastColumn();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Master');
+  if (!sheet) {
+    throw new Error('Sheet "Master" not found.');
+  }
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
   if (lastRow > 1) {
     sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
   }
