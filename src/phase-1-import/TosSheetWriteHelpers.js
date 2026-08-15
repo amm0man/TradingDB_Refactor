@@ -2,16 +2,17 @@
  * TosSheetWriteHelpers.js
  *
  * Small helper functions for safely writing data to sheets while preserving
- * important formatting (especially preventing Google Sheets from stripping
- * leading zeros on CUSIPs, account numbers, etc.).
+ * important formatting — especially preventing Google Sheets from stripping
+ * leading zeros on CUSIPs, account numbers, etc.
  *
  * Key functions:
- *   - tosSetNumberFormatForHeaderColumn()
- *   - tosFormatHeaderColumnAsText()
- *   - tosFormatHeaderColumnsAsText()
+ *   - tosSetNumberFormatForHeaderColumn()   → core formatting engine
+ *   - tosFormatHeaderColumnAsText()         → force one column to Plain Text
+ *   - tosFormatHeaderColumnsAsText()        → force multiple columns to Plain Text
  *
- * These should normally be called BEFORE setValues() when writing data that
- * contains text that looks like numbers.
+ * IMPORTANT: Always call these BEFORE setValues() when writing data that
+ * contains text that looks like numbers. Once Sheets coerces a value to a
+ * number, leading zeros are permanently lost.
  */
 /**
  * Set number format for a column identified by its header text.
