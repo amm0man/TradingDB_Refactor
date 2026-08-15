@@ -1,111 +1,25 @@
 /**
  * DBTools.js
  *
- * Main Phase 3 processing file + the custom "DB Tools" menu.
+ * Phase 3 processing – core logic that turns Schwab Mapping into the final
+ * Staging / Master data.
  *
  * Contains:
- *   - onOpen()                  → builds the entire custom menu system
- *   - validateAndCleanImportToHelperV3()
- *   - populateStagingWithBlockLogicV3()   (core block / position logic)
- *   - copyMappingToImportByHeaders()
+ *   - refreshAllScripts()                 → orchestrates the three Phase 3 steps
+ *   - copyMappingToImportByHeaders()      → Schwab Mapping → Import
+ *   - validateAndCleanImportToHelperV3()  → validation + timestamps → Helper
+ *   - populateStagingWithBlockLogicV3()   → core block / position logic → Staging
  *   - appendStagingToMaster(), backupMasterSheet(), clearMasterExceptHeader()
- *   - Various helpers (logAction, getValByHeader, etc.)
+ *   - Supporting helpers (parseTradeTimeStamp, resolveLiveSpreadGroupId, etc.)
  *
- * This is currently the largest and most central file in the project.
- * Future work: extract the menu into its own file and break the large
- * processing functions into smaller, focused helpers.
+ * The custom menu (onOpen) now lives in Menu.js.
+ *
+ * Related files:
+ *   - Menu.js                            (custom "DB Tools" menu)
+ *   - mapSchwabImportByHeadersV3.js      (Phase 2)
+ *   - BuildUnifiedImportV3.js            (Phase 1)
+ *   - ImportIssues.js / SheetBlanking.js (shared)
  */
-
-
-function onOpen() {
-  const ui = SpreadsheetApp.getUi();
-
-  // Manual Entry submenu
-  const manualEntryMenu = ui.createMenu('Manual Entry')
-    .addItem('Send Entry to Import', 'sendEntryToImport');
-
-  // Raw Data for Sorting submenu (TOS ingest)
-  const TosSchwabImport = ui.createMenu('Raw Data for Sorting')
-    .addItem('Set folder (LT): TosTrades', 'tosTradesSetFolderIdLT')
-    .addItem('Set folder (LT): TosTop', 'tosTopSetFolderIdLT')
-    .addItem('Set folder (DT): TosTrades', 'tosTradesSetFolderIdDT')
-    .addItem('Set folder (DT): TosTop', 'tosTopSetFolderIdDT')
-    .addSeparator()
-
-    // Import raw CSVs -> Combined
-    .addItem('Import TosTrades Current Account → TOS Trades - Combined', 'tosTradesImportFromFolderCurrentAccount')
-    .addItem('Import TosTop Current Account → TOS Top - Combined', 'tosTopImportFromFolderCurrentAccount')
-    .addSeparator()
-
-    // Import BOTH accounts -> Combined
-    .addItem('Import TosTrades BOTH Accounts → TOS Trades - Combined', 'tosTradesImportFromFolderBothAccounts')
-    .addItem('Import TosTop BOTH Accounts → TOS Top - Combined', 'tosTopImportFromFolderBothAccounts')
-    .addSeparator()
-
-    // Blank/reset staging
-    .addItem('Blank TOS Trades - Combined', 'tosBlankTOSTradesCombined')
-    .addItem('Blank TOS Trades', 'tosBlankTosTrades')
-    .addItem('Blank TOS Top - Combined', 'tosBlankTOSTopCombined')
-    .addItem('Blank TOS Top', 'tosBlankTosTop')
-    .addItem('Blank all TOS sheets', 'tosBlankALLTOSSheets')
-    .addSeparator()
-
-    // Push Combined -> TosTop / TosTrades
-    .addItem('Push: TOS Trades - Combined → TosTrades', 'pushTosTradesCombinedToTosTrades')
-    .addItem('Push: TOS Top - Combined → TosTop', 'pushTosTopCombinedToTosTop')
-    .addItem('Push BOTH (Top + Trades)', 'pushTosCombinedToBoth')
-    .addSeparator()
-
-    // One button end-to-end raw -> Schwab Import
-    .addItem('Run FULL (BOTH Accounts): CSV → Combined → TosTop/TosTrades → Schwab Import', 'tosRunFullTosToSchwabImportBothAccounts');
-
-
-  const settingsMenu = ui.createMenu('Settings')
-    .addItem('Set Account Mode DT / LT', `promptSetAccountMode`)
-    .addItem('Toggle TOS Import DEBUG Alerts', `promptToggleTosImportDebugAlerts`)
-    .addSeparator()
-    .addItem('Set Import Issues Write Mode', `promptSetImportIssuesWriteMode`)
-    .addItem('Set Mapping Issues Write Mode', `promptSetMappingIssuesWriteMode`)
-    .addItem('Set Staging Issues Write Mode', `promptSetStagingIssuesWriteMode`)
-    .addItem('Show Current Settings', `showCurrentSettingsDialog`);
-
-  // Schwab Actions submenu
-  const schwabActionsMenu = ui.createMenu('Schwab Actions')
-    .addItem('Build Unified Import V3', 'buildUnifiedImportV3')
-    .addItem('Run Schwab Mapping Script', 'mapSchwabImportByHeadersV3')
-    .addItem('2b. Audit Schwab Mapping (pre-Phase-3 gate)', 'auditSchwabMappingV3')
-    .addItem('Move Schwab Mapping to Import', 'copyMappingToImportByHeaders')
-    .addItem('Blank Schwab Import', 'clearSchwabImportExceptHeader')
-    .addItem('Blank Schwab Mapping', 'clearSchwabMappingExceptHeader')
-    .addItem('Blank all Schwab Sheets', 'blankAllSchwabSheets')
-    .addSeparator()
-    .addSubMenu(settingsMenu);
-
-  // Data Actions submenu (unchanged)
-  const dataActionsMenu = ui.createMenu('Data Actions')
-    .addItem('Schwab Mapping to Import and run scripts', 'refreshAllScripts')
-    .addItem('Run Audit on Staging - Final Check before push to Master', 'auditPipelineIntegrity')
-    .addItem('Push Staging → Master (Append)', 'appendStagingToMaster')
-    .addItem('Backup Master (Snapshot)', 'backupMasterSheet')
-    .addSeparator()
-    .addItem('Blank Import', 'blankImport')
-    .addItem('Blank Helper', 'blankHelper')
-    .addItem('Blank Staging', 'blankStaging')
-    .addItem('Blank ALL Prep Sheets', 'blankAllPrepSheets')
-    .addSeparator()
-    .addItem('Blank Master', 'clearMasterExceptHeader');
-
-
-  // Top-level menu
-  ui.createMenu('DB Tools')
-    .addSubMenu(manualEntryMenu)
-    .addSubMenu(TosSchwabImport)
-    .addSubMenu(schwabActionsMenu)
-    .addSubMenu(dataActionsMenu)
-    .addToUi();
-}
-
-
 
 
 /**  Helper functions
