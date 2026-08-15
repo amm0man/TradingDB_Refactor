@@ -857,8 +857,31 @@ function tosTradesParseExecTime(v) {
   return new Date(Date.UTC(yyyy, mm - 1, dd, HH, MIN, SS, 0));
 }
 /** ======================================================================
- *  Top import: CSV folder -> "TOS Top - Combined"
- *  ====================================================================== */
+ *  CORE TOP-OF-BOOK IMPORT
+ *  CSV folder → "TOS Top - Combined"
+ *  ======================================================================
+ *
+ *  tosTopImportFromFolder(folderIdPropKey, Account)
+ *
+ *  Parallel to tosTradesImportFromFolder, but for the Top-of-Book / 
+ *  Account Statement style CSVs.
+ *
+ *  High-level steps:
+ *    1. Acquire a script lock
+ *    2. Start an Import Issues context
+ *    3. Read the Drive folder ID from Settings
+ *    4. Collect and sort CSV files in that folder
+ *    5. Parse each file (via tosTopParseOneCsvFile)
+ *    6. Apply ET → CT time correction
+ *    7. Combine rows, tagging each with Account + source file name
+ *    8. Write into "TOS Top - Combined"
+ *       (preserving the other account’s rows when configured)
+ *    9. Flush metrics and issues
+ *
+ *  Called by the menu wrappers:
+ *    - tosTopImportFromFolderBothAccounts()
+ *    - tosTopImportFromFolderCurrentAccount()
+ */
 function tosTopImportFromFolder(folderIdPropKey, Account) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
