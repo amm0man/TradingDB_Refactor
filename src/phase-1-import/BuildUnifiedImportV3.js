@@ -40,7 +40,24 @@ function uiAlertSafe(message) {
 
 
 /**
- * Main entry point (menu item should call this).
+ * buildUnifiedImportV3()
+ *
+ * Main entry point (called from the DB Tools menu).
+ *
+ * High-level job:
+ *   Read the working sheets "TosTrades" and "TosTop",
+ *   match trade legs to fee/amount rows,
+ *   handle corporate actions and cash movements,
+ *   and write one clean, unified table into the sheet "Schwab Import".
+ *
+ * This is the bridge between the raw TOS import pipeline
+ * and Phase 2 (Mapping).
+ *
+ * Key behaviors:
+ *   - Processes both DT and LT accounts in a single run
+ *   - Uses a script lock to prevent overlapping runs
+ *   - Logs everything under one Import Issues run context
+ *   - Contains many nested helper functions (kept local for now)
  */
 function buildUnifiedImportV3() {
   // ----------------------------
