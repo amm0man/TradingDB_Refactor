@@ -14,6 +14,7 @@
  *
  * Also contains:
  *   - Master utilities (append, backup, clear)
+ *    - appendStagingToMaster(), backupMasterSheet() - clearMasterExceptHeader() lives in SheetBlanking.js
  *   - Supporting helpers used by the three steps above
  *
  * The custom menu (onOpen) now lives in Menu.js.
@@ -2403,22 +2404,5 @@ function backupMasterSheet() {
   const name = 'Master_Backup_' + Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyyMMdd_HHmmss');
   m.copyTo(ss).setName(name);
   //logAction('BACKUP MASTER',name);
-}
-/**
- * Clears all data rows from the Master sheet while keeping the header row.
- * Note: Sheet name is case-sensitive — must be exactly "Master".
- */
-function clearMasterExceptHeader() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Master');
-  if (!sheet) {
-    throw new Error('Sheet "Master" not found.');
-  }
-
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
-  if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
-  }
 }
 

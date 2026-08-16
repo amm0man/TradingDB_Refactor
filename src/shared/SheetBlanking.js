@@ -8,12 +8,13 @@
  * Used heavily during re-imports and pipeline resets so old data does not
  * mix with new data.
  *
- * Main functions:
+* Main functions:
  *   - tosBlankSheetExceptHeader_()     → core reusable blanking engine (private)
  *   - tosBlankTosTop(), tosBlankTosTrades(), etc. → specific TOS sheets
  *   - tosBlankALLTOSSheets()           → one-click clear of all TOS-related sheets
  *   - blankAllSchwabSheets()           → clears Schwab Import + Schwab Mapping
  *   - blankAllPrepSheets()             → clears Import / Helper / Staging
+ *   - clearMasterExceptHeader()        → clears Master (keeps header)
  *   - clearData()                      → generic helper used by the blank* functions
  *
  * All public blanking functions keep row 1 (headers) intact.
@@ -137,4 +138,26 @@ function clearData(sheetName, startRow) {
   const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
   const lr = sh.getLastRow();
   if (lr >= startRow) sh.getRange(startRow, 1, lr - startRow + 1, sh.getLastColumn()).clearContent();
+}
+
+// ----------------------------
+// Master sheet
+// ----------------------------
+
+/**
+ * Clears all data rows from the Master sheet while keeping the header row.
+ * Note: Sheet name is case-sensitive — must be exactly "Master".
+ */
+function clearMasterExceptHeader() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Master');
+  if (!sheet) {
+    throw new Error('Sheet "Master" not found.');
+  }
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+  }
 }
