@@ -83,10 +83,6 @@ function buildUnifiedImportV3() {
       return v === null || v === undefined ? "" : String(v);
     }
 
-    function normalizeHeader(s) {
-      return toStr(s).trim().toLowerCase().replace(/\s+/g, " ");
-    }
-
     // Loose find-by-name: trims and lowercases so "CusipMap " still works.
     function getSheetByNameLoose(name) {
       const target = String(name || "")

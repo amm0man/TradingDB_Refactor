@@ -167,3 +167,72 @@ function testNumberHelpers() {
     );
   });
 }
+
+// =========================================================================
+// HEADER / COLUMN HELPERS
+//   Build a header→index map and look up columns by name.
+//   normalizeHeader collapses whitespace so "Trade  Date" still matches.
+// =========================================================================
+
+/**
+ * Normalize a header string for map keys: trim, lower-case, collapse spaces.
+ */
+function normalizeHeader(s) {
+  return String(s == null ? "" : s)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Build a map: normalized header → column index (0-based).
+ */
+function buildHeaderIndexMap(headers) {
+  const map = {};
+  for (let c = 0; c < headers.length; c++) {
+    const key = normalizeHeader(headers[c]);
+    if (key) map[key] = c;
+  }
+  return map;
+}
+
+/**
+ * Look up a column index by header name. Throws if not found.
+ */
+function col(headerMap, name) {
+  const key = normalizeHeader(name);
+  const idx = headerMap[key];
+  if (typeof idx === "undefined") {
+    throw new Error("Header not found: " + name);
+  }
+  return idx;
+}
+
+/**
+ * Look up a column index; supports one name or an array of alternate names.
+ * Returns null if none match (does not throw).
+ */
+function colOrNull(headerMap, nameOrNames) {
+  const names = Array.isArray(nameOrNames) ? nameOrNames : [nameOrNames];
+  for (let i = 0; i < names.length; i++) {
+    const key = normalizeHeader(names[i]);
+    if (typeof headerMap[key] !== "undefined") return headerMap[key];
+  }
+  return null;
+}
+
+/**
+ * Throw if any required header names are missing from the map.
+ */
+function requireHeaders(headerMap, requiredHeaders, where) {
+  const missing = [];
+  for (let i = 0; i < requiredHeaders.length; i++) {
+    const k = normalizeHeader(requiredHeaders[i]);
+    if (typeof headerMap[k] === "undefined") missing.push(requiredHeaders[i]);
+  }
+  if (missing.length) {
+    throw new Error(
+      "Missing headers in " + where + ": " + missing.join(", "),
+    );
+  }
+}

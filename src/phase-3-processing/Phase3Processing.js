@@ -51,10 +51,6 @@ function logAction(action, details) {
 }
 
 // Tiny helpers
-function getValByHeader(row, headers, colName) {
-  const idx = headers.indexOf(colName.toLowerCase());
-  return idx > -1 ? row[idx] : "";
-}
 
 function ensureValidationErrorSheet() {
   let sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Validation Errors");

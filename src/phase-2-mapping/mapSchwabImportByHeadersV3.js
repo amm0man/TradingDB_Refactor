@@ -1381,17 +1381,6 @@ function postProcessWarnMissingNetAmountBySpreadGroupsV3(
 // Core helper functions (mostly unchanged from your prior version)
 // =====================================================
 
-/** Build a map: lowercased trimmed header => column index */
-function buildHeaderIndexMap(headers) {
-  const map = {};
-  for (let c = 0; c < headers.length; c++) {
-    const key = String(headers[c] || "")
-      .trim()
-      .toLowerCase();
-    if (key) map[key] = c;
-  }
-  return map;
-}
 
 /** Checks for duplicate Headers */
 function assertNoDuplicateHeaders(headers, where, ctx) {
@@ -1413,27 +1402,6 @@ function assertNoDuplicateHeaders(headers, where, ctx) {
     }
     throw new Error(msg);
   }
-}
-
-/** Safe header column lookup (throws if missing) */
-function col(headerMap, name) {
-  const key = String(name || "")
-    .trim()
-    .toLowerCase();
-  const idx = headerMap[key];
-  if (typeof idx === "undefined") throw new Error("Header not found: " + name);
-  return idx;
-}
-
-/** Require a set of headers exist (by name) */
-function requireHeaders(headerMap, requiredHeaders, where) {
-  const missing = [];
-  for (let i = 0; i < requiredHeaders.length; i++) {
-    const k = String(requiredHeaders[i]).trim().toLowerCase();
-    if (typeof headerMap[k] === "undefined") missing.push(requiredHeaders[i]);
-  }
-  if (missing.length)
-    throw new Error("Missing headers in " + where + ": " + missing.join(", "));
 }
 
 /** Normalize Time Stamp into a real Date object (authoritative). */
