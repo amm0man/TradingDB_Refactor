@@ -70,3 +70,34 @@ function testCusipHelpers() {
 // =========================================================================
 // (Future groups will go here, e.g. NUMBER HELPERS, UI HELPERS, etc.)
 // =========================================================================
+
+// =========================================================================
+// UI HELPERS
+//   Safe alerts that work from the spreadsheet menu and do not crash when
+//   there is no UI (triggers, API, clasp run, etc.).
+// =========================================================================
+
+/**
+ * Show a UI alert when possible; otherwise write to Logger.
+ * Prefer this over SpreadsheetApp.getUi().alert() in shared/pipeline code.
+ */
+function uiAlertSafe(message) {
+  try {
+    SpreadsheetApp.getUi().alert(String(message || ""));
+  } catch (e) {
+    Logger.log("uiAlertSafe (no UI): " + message);
+  }
+}
+
+/**
+ * Backward-compatible alias used by the TOS import pipeline.
+ * New code should call uiAlertSafe() directly.
+ */
+function tosUiAlertSafe(message) {
+  uiAlertSafe(message);
+}
+
+// UI Test if working
+function testUiAlertSafe() {
+  uiAlertSafe("Helpers.js uiAlertSafe is working");
+}

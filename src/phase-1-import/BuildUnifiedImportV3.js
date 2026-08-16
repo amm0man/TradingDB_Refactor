@@ -27,16 +27,6 @@
  *   - MapSchwabImportByHeadersV3.js (Phase 2 – runs after this)
  */
 
-// UI-safe alert helper.
-// - Works when run from spreadsheet UI (menus).
-// - Does not crash when no UI exists (triggers / API), it logs instead.
-function uiAlertSafe(message) {
-  try {
-    SpreadsheetApp.getUi().alert(String(message || ""));
-  } catch (e) {
-    Logger.log("uiAlertSafe (no UI): " + message);
-  }
-}
 
 /**
  * buildUnifiedImportV3()
