@@ -101,3 +101,46 @@ function tosUiAlertSafe(message) {
 function testUiAlertSafe() {
   uiAlertSafe("Helpers.js uiAlertSafe is working");
 }
+
+// =========================================================================
+// NUMBER HELPERS
+//   Shared parsing for quantities, prices, fees, and amounts.
+//
+//   toNum(v)        → Number or NaN   (use for math / isNaN checks)
+//   parseNumber(v)  → Number or ""    (use when writing sheet cells)
+//
+//   Both understand commas, $, and accounting parentheses: (123.45) → -123.45
+// =========================================================================
+
+/**
+ * Parse a value to a number for math.
+ * Blank or invalid → NaN (so callers can use isNaN()).
+ */
+function toNum(v) {
+  if (v === null || v === undefined || v === "") return NaN;
+  if (typeof v === "number") return isFinite(v) ? v : NaN;
+
+  const s = String(v).trim();
+  if (!s) return NaN;
+
+  // Accounting format: (123.45) means negative
+  const neg = /^\(.*\)$/.test(s);
+  const cleaned = s
+    .replace(/[(),$]/g, "")
+    .replace(/,/g, "")
+    .trim();
+
+  const n = Number(cleaned);
+  if (isNaN(n)) return NaN;
+  return neg ? -n : n;
+}
+
+/**
+ * Parse a value for writing to a sheet cell.
+ * Blank or invalid → "" so the cell stays empty.
+ */
+function parseNumber(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const n = toNum(v);
+  return isNaN(n) ? "" : n;
+}

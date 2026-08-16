@@ -1545,25 +1545,6 @@ function buildSignedQuantity(sideRaw, qtyAbs) {
   return side === "SELL" ? -Math.abs(q) : Math.abs(q);
 }
 
-/** Parse currency/number strings into a Number, or '' if blank. */
-function parseNumber(v) {
-  if (v === null || typeof v === "undefined" || v === "") return "";
-  if (typeof v === "number") return v;
-
-  const s = String(v).trim();
-  if (!s) return "";
-
-  // Handle parentheses as negative, remove $ and commas
-  const neg = /^\(.*\)$/.test(s);
-  const cleaned = s
-    .replace(/[(),$]/g, "")
-    .replace(/,/g, "")
-    .trim();
-
-  const n = Number(cleaned);
-  if (isNaN(n)) return "";
-  return neg ? -n : n;
-}
 
 /** Extract ticker from Symbol. For options like "MRVL 11/19/2021 70.00 C", ticker = "MRVL". */
 function extractTickerFromSymbol(symbolRaw) {

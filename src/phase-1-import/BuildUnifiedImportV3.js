@@ -674,14 +674,7 @@ function buildUnifiedImportV3() {
       return "";
     }
 
-    function toNum(v) {
-      if (v === null || v === undefined || v === "") return NaN;
-      if (typeof v === "number") return v;
-      const s = String(v).replace(/,/g, "").trim();
-      const n = Number(s);
-      return isNaN(n) ? NaN : n;
-    }
-
+   
     function roundTo(n, decimals) {
       const x = toNum(n);
       if (isNaN(x)) return NaN;
