@@ -236,3 +236,13 @@ function requireHeaders(headerMap, requiredHeaders, where) {
     );
   }
 }
+
+// Header Fast check
+function testHeaderHelpers() {
+  const headers = ["Account", "Trade  Date", "Quantity"];
+  const map = buildHeaderIndexMap(headers);
+  Logger.log(JSON.stringify(map));
+  Logger.log("Account → " + col(map, "account"));
+  Logger.log("Trade Date → " + col(map, "Trade Date")); // collapsed spaces
+  Logger.log("Missing → " + colOrNull(map, "NoSuchColumn"));
+}
