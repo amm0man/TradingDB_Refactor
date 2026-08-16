@@ -144,3 +144,26 @@ function parseNumber(v) {
   const n = toNum(v);
   return isNaN(n) ? "" : n;
 }
+
+// Fast check (optional):
+function testNumberHelpers() {
+  const samples = [
+    123.45,
+    "1,234.56",
+    "$99.00",
+    "(50.25)",
+    "  ",
+    "",
+    null,
+    "abc",
+  ];
+  samples.forEach((v) => {
+    Logger.log(
+      JSON.stringify(v) +
+        " → toNum=" +
+        toNum(v) +
+        " parseNumber=" +
+        JSON.stringify(parseNumber(v)),
+    );
+  });
+}
