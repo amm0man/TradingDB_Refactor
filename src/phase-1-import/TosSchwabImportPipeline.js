@@ -125,14 +125,53 @@ function tosTopNormalizeDateToIso(dateVal) {
 
 /**
  * ScriptProperties keys (stored server-side, persistent across runs).
- * Note: The key strings can be anything; these are stable and descriptive.
+ *
+ * Current model: one Drive folder per account (LT and DT).
+ * Each yearly CSV in that folder contains both sections:
+ *   - TosTop (top portion)
+ *   - TosTrades (bottom portion)
+ *
+ * New keys (preferred):
+ *   TOS_CSV_FOLDER_ID_LT
+ *   TOS_CSV_FOLDER_ID_DT
+ *
+ * Legacy keys are kept so existing ScriptProperties still work
+ * until you re-save the folders from the menu.
  */
 const tosProps = {
+  csvFolderIdLT: 'TOS_CSV_FOLDER_ID_LT',
+  csvFolderIdDT: 'TOS_CSV_FOLDER_ID_DT',
+
+  // Legacy — do not delete yet. Used as fallback if the new key is empty.
   tradesFolderIdLT: 'TOS_TRADES_FOLDER_ID_LT',
   tradesFolderIdDT: 'TOS_TRADES_FOLDER_ID_DT',
   topFolderIdLT: 'TOS_TOP_FOLDER_ID_LT',
   topFolderIdDT: 'TOS_TOP_FOLDER_ID_DT',
 };
+
+/**
+ * Returns the ScriptProperties key to use for this account's CSV folder.
+ *
+ * Preference order:
+ *   1. New one-folder-per-account key (TOS_CSV_FOLDER_ID_LT / _DT)
+ *   2. Legacy TosTrades folder key for that account
+ *   3. Legacy TosTop folder key for that account
+ *
+ * If nothing is saved yet, the new key is returned so the "not set"
+ * error names the current setting.
+ */
+function tosGetAccountFolderIdPropKey(Account) {
+  const acct = String(Account || '').trim().toUpperCase() === 'LT' ? 'LT' : 'DT';
+
+  const primary = (acct === 'LT') ? tosProps.csvFolderIdLT : tosProps.csvFolderIdDT;
+  const legacyTrades = (acct === 'LT') ? tosProps.tradesFolderIdLT : tosProps.tradesFolderIdDT;
+  const legacyTop = (acct === 'LT') ? tosProps.topFolderIdLT : tosProps.topFolderIdDT;
+
+  if (String(getSetting(primary, '') || '').trim()) return primary;
+  if (String(getSetting(legacyTrades, '') || '').trim()) return legacyTrades;
+  if (String(getSetting(legacyTop, '') || '').trim()) return legacyTop;
+  return primary;
+}
 
 /**
  * Canonical account selector for this project:
@@ -173,21 +212,19 @@ function tosUiAlertSafe(message) {
 }
 
 
-function tosTradesSetFolderIdLT() {
-  tosSetFolderId('TOS Trades Folder ID (LT)', tosProps.tradesFolderIdLT);
+function tosSetCsvFolderIdLT() {
+  tosSetFolderId('TOS CSV Folder ID (LT — TosTop + TosTrades)', tosProps.csvFolderIdLT);
 }
 
-function tosTradesSetFolderIdDT() {
-  tosSetFolderId('TOS Trades Folder ID (DT)', tosProps.tradesFolderIdDT);
+function tosSetCsvFolderIdDT() {
+  tosSetFolderId('TOS CSV Folder ID (DT — TosTop + TosTrades)', tosProps.csvFolderIdDT);
 }
 
-function tosTopSetFolderIdLT() {
-  tosSetFolderId('TOS Top Folder ID (LT)', tosProps.topFolderIdLT);
-}
-
-function tosTopSetFolderIdDT() {
-  tosSetFolderId('TOS Top Folder ID (DT)', tosProps.topFolderIdDT);
-}
+// Legacy menu names kept so an un-reloaded DB Tools menu still works.
+function tosTradesSetFolderIdLT() { tosSetCsvFolderIdLT(); }
+function tosTradesSetFolderIdDT() { tosSetCsvFolderIdDT(); }
+function tosTopSetFolderIdLT() { tosSetCsvFolderIdLT(); }
+function tosTopSetFolderIdDT() { tosSetCsvFolderIdDT(); }
 
 function tosSetFolderId(title, propKey) {
   const ui = SpreadsheetApp.getUi();
@@ -235,13 +272,13 @@ function tosSetFolderId(title, propKey) {
 // Runs the import for DT and then LT so both accounts end up in the Combined sheets.
 
 function tosTradesImportFromFolderBothAccounts() {
-  tosTradesImportFromFolder(tosProps.tradesFolderIdDT, 'DT');
-  tosTradesImportFromFolder(tosProps.tradesFolderIdLT, 'LT');
+  tosTradesImportFromFolder(tosGetAccountFolderIdPropKey('DT'), 'DT');
+  tosTradesImportFromFolder(tosGetAccountFolderIdPropKey('LT'), 'LT');
 }
 
 function tosTopImportFromFolderBothAccounts() {
-  tosTopImportFromFolder(tosProps.topFolderIdDT, 'DT');
-  tosTopImportFromFolder(tosProps.topFolderIdLT, 'LT');
+  tosTopImportFromFolder(tosGetAccountFolderIdPropKey('DT'), 'DT');
+  tosTopImportFromFolder(tosGetAccountFolderIdPropKey('LT'), 'LT');
 }
 
 /**
@@ -270,14 +307,12 @@ function tosRunFullTosToSchwabImportBothAccounts() {
 
 function tosTradesImportFromFolderCurrentAccount() {
   const Account = tosGetCurrentAccount(); // "DT" or "LT"
-  const folderKey = (Account === 'LT') ? tosProps.tradesFolderIdLT : tosProps.tradesFolderIdDT;
-  tosTradesImportFromFolder(folderKey, Account);
+  tosTradesImportFromFolder(tosGetAccountFolderIdPropKey(Account), Account);
 }
 
 function tosTopImportFromFolderCurrentAccount() {
   const Account = tosGetCurrentAccount(); // "DT" or "LT"
-  const folderKey = (Account === 'LT') ? tosProps.topFolderIdLT : tosProps.topFolderIdDT;
-  tosTopImportFromFolder(folderKey, Account);
+  tosTopImportFromFolder(tosGetAccountFolderIdPropKey(Account), Account);
 }
 
 /**
