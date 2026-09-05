@@ -27,7 +27,6 @@
  *   - MapSchwabImportByHeadersV3.js (Phase 2 – runs after this)
  */
 
-
 /**
  * buildUnifiedImportV3()
  *
@@ -182,7 +181,6 @@ function buildUnifiedImportV3() {
     //   • Special-case parsers (DRIP, TDA fractional sells, RAD splits, etc.)
     //
     // =========================================================================
-
 
     function previewTopCandidates(list, limit) {
       const arr = Array.isArray(list) ? list : [];
@@ -670,7 +668,6 @@ function buildUnifiedImportV3() {
       return "";
     }
 
-   
     function roundTo(n, decimals) {
       const x = toNum(n);
       if (isNaN(x)) return NaN;
@@ -2054,6 +2051,8 @@ function buildUnifiedImportV3() {
           descRawForSkipCheck,
           skipCheckQty,
           skipCheckAmount,
+          skipCheckDateIso,
+          skipCheckAccount,
         )
       )
         continue;
@@ -2930,6 +2929,15 @@ function buildUnifiedImportV3() {
         if (expIsBlank) exp = dottedOpt.expDate;
         if (strikeIsBlank) strike = dottedOpt.strike;
       }
+
+      // EXERCISE / ASSIGN: TosTrades often already has the share movement
+      // (BUY +100 STOCK) next to the option close. We emit ONE synthetic
+      // stock row from the option leg and put TosTop cash on that row.
+      // Skip this companion stock line so Schwab Import does not double the shares.
+      if (isExerciseOrAssign && typeKey === "STOCK") {
+        continue;
+      }
+
       // Baseline match price (used for TosTop enrichment matching).
       // STOCK/SINGLE/EXERCISE/ASSIGN: prefer numeric Net Price; otherwise use leg Price.
       // Spreads: start with leg Price; we may override later with computedSpreadNetAbs.
@@ -3525,34 +3533,39 @@ function buildUnifiedImportV3() {
 
           // Classify failure (data gap vs mismatch) like your original code
           if (dtCount === 0) {
-            const gapKey = [
-              Account, // <-- add this for Mode B
-              dateIso,
-              timeHHmm,
-              symForMatch, // <-- use the same symbol you matched with (optional but recommended)
-              spread,
-              toStr(exp),
-              typeKey,
-              toStr(strike),
-              posEffect,
-              side,
-              orderType,
-            ].join("|");
+            // Same rule as NO_SYMBOL_IN_MINUTE: exercise/assign cash lives on
+            // the synthetic STOCK leg. Do not treat the companion stock line
+            // as a missing TosTop TRD.
+            if (!isExerciseOrAssignSpread(spread)) {
+              const gapKey = [
+                Account, // <-- add this for Mode B
+                dateIso,
+                timeHHmm,
+                symForMatch, // <-- use the same symbol you matched with (optional but recommended)
+                spread,
+                toStr(exp),
+                typeKey,
+                toStr(strike),
+                posEffect,
+                side,
+                orderType,
+              ].join("|");
 
-            if (!missingTradeEnrichmentDataGapSeen[gapKey]) {
-              missingTradeEnrichmentDataGapSeen[gapKey] = true;
-              importIssuesAdd(
-                ctx,
-                "TRADE_ENRICHMENT_DATA_GAP_NO_TRD_ROWS",
-                "TosTrades",
-                i + 2,
-                "TosTop TRD minute",
-                gapKey,
-                JSON.stringify({
-                  message: "No TosTop TRD rows exist in this minute",
-                  pullDebug,
-                }),
-              );
+              if (!missingTradeEnrichmentDataGapSeen[gapKey]) {
+                missingTradeEnrichmentDataGapSeen[gapKey] = true;
+                importIssuesAdd(
+                  ctx,
+                  "TRADE_ENRICHMENT_DATA_GAP_NO_TRD_ROWS",
+                  "TosTrades",
+                  i + 2,
+                  "TosTop TRD minute",
+                  gapKey,
+                  JSON.stringify({
+                    message: "No TosTop TRD rows exist in this minute",
+                    pullDebug,
+                  }),
+                );
+              }
             }
           } else if (symCount === 0) {
             // NEW: skip gap warning for EXERCISE/ASSIGN — enrichment is moved to synthetic STOCK leg
