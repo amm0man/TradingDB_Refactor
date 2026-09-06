@@ -363,6 +363,107 @@ function pushTosCombinedToBoth() {
   }
 }
 
+/**
+ * Resolves the Drive folder for one account from ScriptProperties.
+ * Shared by tosTradesImportFromFolder and tosTopImportFromFolder.
+ *
+ * On failure this logs + alerts + flushes issues and returns null.
+ * Caller must return early when the result is null.
+ *
+ * @param {string} folderIdPropKey
+ * @param {string} Account
+ * @param {*} ctx  Import Issues context
+ * @returns {{folder: GoogleAppsScript.Drive.Folder, folderId: string, folderName: string}|null}
+ */
+function tosResolveAccountCsvFolder(folderIdPropKey, Account, ctx) {
+  if (!folderIdPropKey) {
+    importIssuesAdd(
+      ctx,
+      "ERROR",
+      "",
+      "",
+      "FolderIdPropKey",
+      "",
+      "Missing folderIdPropKey argument."
+    );
+    importIssuesFlush(ctx);
+    tosUiAlertSafe("Folder ID prop key was not provided.");
+    return null;
+  }
+
+  const folderId = String(getSetting(folderIdPropKey, "") || "").trim();
+  importIssuesSetMetric(ctx, "FolderIdUsed", folderId || "");
+
+  if (!folderId) {
+    importIssuesAdd(
+      ctx,
+      "ERROR",
+      "",
+      "",
+      "FolderId",
+      "",
+      "Folder ID not set for key: " + folderIdPropKey
+    );
+    importIssuesFlush(ctx);
+    tosUiAlertSafe("Folder ID not set. Run the folder setup menu item first.");
+    return null;
+  }
+
+  const folder = DriveApp.getFolderById(folderId);
+  const folderName = folder.getName();
+  importIssuesSetMetric(ctx, "FolderNameUsed", folderName);
+  return { folder: folder, folderId: folderId, folderName: folderName };
+}
+
+/**
+ * Lists CSV-like files in a Drive folder, sorted by name.
+ * Accepts .csv names plus CSV / Excel MIME types (same rule both walks used).
+ *
+ * On empty folder this logs + alerts + flushes issues and returns null.
+ *
+ * @param {GoogleAppsScript.Drive.Folder} folder
+ * @param {*} ctx
+ * @returns {GoogleAppsScript.Drive.File[]|null}
+ */
+function tosListCsvFilesInFolder(folder, ctx) {
+  const files = folder.getFiles();
+  const csvFiles = [];
+
+  while (files.hasNext()) {
+    const f = files.next();
+    const name = (f.getName() || "").toLowerCase();
+    const mime = f.getMimeType();
+    if (
+      name.endsWith(".csv") ||
+      mime === MimeType.CSV ||
+      mime === MimeType.MICROSOFT_EXCEL
+    ) {
+      csvFiles.push(f);
+    }
+  }
+
+  importIssuesSetMetric(ctx, "FilesFound", csvFiles.length);
+
+  if (!csvFiles.length) {
+    importIssuesAdd(ctx, "WARN", "", "", "Files", "", "No CSV-like files found in the folder.");
+    importIssuesFlush(ctx);
+    tosUiAlertSafe("No CSV-like files found in folder.");
+    return null;
+  }
+
+  csvFiles.sort(function (a, b) {
+    return (a.getName() || "").localeCompare(b.getName() || "");
+  });
+
+  importIssuesSetMetric(
+    ctx,
+    "FirstCsvFile",
+    csvFiles[0] && csvFiles[0].getName() ? csvFiles[0].getName() : ""
+  );
+
+  return csvFiles;
+}
+
 /** ======================================================================
  *  CORE TRADES IMPORT
  *  CSV folder → "TOS Trades - Combined"
@@ -399,106 +500,26 @@ function tosTradesImportFromFolder(folderIdPropKey, Account) {
   importIssuesSetMetric(ctx, "FolderIdPropKey", folderIdPropKey || "");
 
   try {
-    // NEW: guard - if caller forgot to pass a prop key, fail loudly (prevents accidental fallback behavior elsewhere)
-    if (!folderIdPropKey) {
-      importIssuesAdd(
-        ctx,
-        "ERROR",
-        "",
-        "",
-        "FolderIdPropKey",
-        "",
-        "Missing folderIdPropKey argument when calling tosTradesImportFromFolder().",
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe(
-        "Folder ID prop key was not provided to tosTradesImportFromFolder().",
-      );
-      return;
-    }
+    const resolved = tosResolveAccountCsvFolder(folderIdPropKey, Account, ctx);
+    if (!resolved) return;
 
-    const folderId = String(getSetting(folderIdPropKey, "") || "").trim();
+    const folder = resolved.folder;
+    const folderId = resolved.folderId;
+    const folderName = resolved.folderName;
 
-    // NEW: log the exact folder id we read from ScriptProperties
-    importIssuesSetMetric(ctx, "FolderIdUsed", folderId || "");
-
-    if (!folderId) {
-      importIssuesAdd(
-        ctx,
-        "ERROR",
-        "",
-        "",
-        "FolderId",
-        "",
-        "Folder ID not set for key: " + folderIdPropKey,
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe(
-        "Folder ID not set. Run the folder setup menu item first.",
-      );
-      return;
-    }
-
-    const folder = DriveApp.getFolderById(folderId);
-
-    // NEW: log the folder name so you can instantly tell if it’s the DT or LT folder
-    const folderName = folder.getName();
-    importIssuesSetMetric(ctx, "FolderNameUsed", folderName);
-    // Optional immediate proof popup (controlled by Settings > Toggle TOS Import DEBUG Alerts)
     tosMaybeDebugAlert(
-      "tosTradesImportFromFolder DEBUG\n\n" +
-        "Account: " +
+      "tosTradesImportFromFolder DEBUG\n\nAccount: " +
         (Account || "") +
-        "\n" +
-        "FolderIdPropKey: " +
+        "\nFolderIdPropKey: " +
         folderIdPropKey +
-        "\n" +
-        "FolderIdUsed: " +
+        "\nFolderIdUsed: " +
         folderId +
-        "\n" +
-        "FolderNameUsed: " +
-        folderName,
+        "\nFolderNameUsed: " +
+        folderName
     );
 
-    const files = folder.getFiles();
-    const csvFiles = [];
-
-    while (files.hasNext()) {
-      const f = files.next();
-      const name = (f.getName() || "").toLowerCase();
-      const mime = f.getMimeType();
-
-      // TOS exports are often text/csv but sometimes show as "Microsoft Excel"
-      if (
-        name.endsWith(".csv") ||
-        mime === MimeType.CSV ||
-        mime === MimeType.MICROSOFT_EXCEL
-      ) {
-        csvFiles.push(f);
-      }
-    }
-
-    importIssuesSetMetric(ctx, "FilesFound", csvFiles.length);
-
-    if (!csvFiles.length) {
-      importIssuesAdd(
-        ctx,
-        "WARN",
-        "",
-        "",
-        "Files",
-        "",
-        "No CSV-like files found in the folder.",
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe("No CSV-like files found in folder.");
-      return;
-    }
-
-    // Sort deterministically by file name (helps debugging + repeatability)
-    csvFiles.sort((a, b) =>
-      (a.getName() || "").localeCompare(b.getName() || ""),
-    );
+    const csvFiles = tosListCsvFilesInFolder(folder, ctx);
+    if (!csvFiles) return;
 
     // NEW: record the first file name as a quick sanity check (optional but very useful)
     importIssuesSetMetric(
@@ -1111,53 +1132,13 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
   importIssuesSetMetric(ctx, "FolderIdPropKey", folderIdPropKey || "");
 
   try {
-    // NEW: guard - missing prop key means we cannot reliably read a folder id
-    if (!folderIdPropKey) {
-      importIssuesAdd(
-        ctx,
-        "ERROR",
-        "",
-        "",
-        "FolderIdPropKey",
-        "",
-        "Missing folderIdPropKey argument when calling tosTopImportFromFolder().",
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe(
-        "Folder ID prop key was not provided to tosTopImportFromFolder().",
-      );
-      return;
-    }
+      const resolved = tosResolveAccountCsvFolder(folderIdPropKey, Account, ctx);
+    if (!resolved) return;
 
-    const folderId = String(getSetting(folderIdPropKey, "") || "").trim();
+    const folder = resolved.folder;
+    const folderId = resolved.folderId;
+    const folderName = resolved.folderName;
 
-    // NEW: log what we actually read
-    importIssuesSetMetric(ctx, "FolderIdUsed", folderId || "");
-
-    if (!folderId) {
-      importIssuesAdd(
-        ctx,
-        "ERROR",
-        "",
-        "",
-        "FolderId",
-        "",
-        "Folder ID not set for key: " + folderIdPropKey,
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe(
-        "Folder ID not set. Run the folder setup menu item first.",
-      );
-      return;
-    }
-
-    const folder = DriveApp.getFolderById(folderId);
-
-    // NEW: folder name is the best “sanity check” that we’re in DT vs LT
-    const folderName = folder.getName();
-    importIssuesSetMetric(ctx, "FolderNameUsed", folderName);
-
-    // Optional immediate proof popup (controlled by Settings > Toggle TOS Import DEBUG Alerts)
     tosMaybeDebugAlert(
       "tosTopImportFromFolder DEBUG\n\n" +
         "Account: " +
@@ -1170,55 +1151,11 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
         folderId +
         "\n" +
         "FolderNameUsed: " +
-        folderName,
+        folderName
     );
 
-    const files = folder.getFiles();
-    const csvFiles = [];
-
-    while (files.hasNext()) {
-      const f = files.next();
-      const name = (f.getName() || "").toLowerCase();
-      const mime = f.getMimeType();
-
-      // TOS exports are often text/csv but sometimes show as "Microsoft Excel"
-      if (
-        name.endsWith(".csv") ||
-        mime === MimeType.CSV ||
-        mime === MimeType.MICROSOFT_EXCEL
-      ) {
-        csvFiles.push(f);
-      }
-    }
-
-    importIssuesSetMetric(ctx, "FilesFound", csvFiles.length);
-
-    if (!csvFiles.length) {
-      importIssuesAdd(
-        ctx,
-        "WARN",
-        "",
-        "",
-        "Files",
-        "",
-        "No CSV-like files found in the folder.",
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe("No CSV-like files found in folder.");
-      return;
-    }
-
-    // Sort deterministically for repeatability
-    csvFiles.sort((a, b) =>
-      (a.getName() || "").localeCompare(b.getName() || ""),
-    );
-
-    // Handy sanity metric
-    importIssuesSetMetric(
-      ctx,
-      "FirstCsvFile",
-      csvFiles[0] && csvFiles[0].getName() ? csvFiles[0].getName() : "",
-    );
+       const csvFiles = tosListCsvFilesInFolder(folder, ctx);
+    if (!csvFiles) return;
 
     let canonicalHeader = null;
 
