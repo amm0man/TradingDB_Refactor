@@ -207,6 +207,162 @@ function buildUnifiedImportV3() {
       if (j >= 0) b.splice(j, 1);
     }
 
+    /**
+     * Combine TosTop partial fills into one enrichment pull.
+     *
+     * Used when no single TosTop TRD has the full TosTrades qty, but 2+ unused
+     * TRDs for the same underlying + same price add up exactly to that qty.
+     * Searches the trade minute and the minutes immediately before/after
+     * (fills often print a few seconds apart and can cross :59 -> :00).
+     *
+     * Example: TosTrades SELL -76 UUUU at 13:15:05
+     *          TosTop     SOLD -10 at 13:14:56 + SOLD -66 at 13:15:05
+     */
+    function pullPartialFillEnrichment_(
+      account,
+      dateIso,
+      tradeTs,
+      minuteKey,
+      sym,
+      qtyAbs,
+      matchPrice,
+      debug,
+    ) {
+      const wantQty = Number(qtyAbs);
+      if (!isFinite(wantQty) || wantQty <= 0) return null;
+
+      const nearbyKeys = [minuteKey];
+      if (tradeTs instanceof Date && !isNaN(tradeTs.getTime())) {
+        const minusTs = new Date(tradeTs.getTime() - 60 * 1000);
+        const plusTs = new Date(tradeTs.getTime() + 60 * 1000);
+        nearbyKeys.push(
+          [account, normalizeDate(minusTs), normalizeTime(minusTs)].join("|"),
+        );
+        nearbyKeys.push(
+          [account, normalizeDate(plusTs), normalizeTime(plusTs)].join("|"),
+        );
+      }
+
+      const pieces = [];
+      for (let k = 0; k < nearbyKeys.length; k++) {
+        const dtKey = nearbyKeys[k];
+        const bucket = topTradeQueueByDateTime[dtKey] || [];
+        for (let i = 0; i < bucket.length; i++) {
+          const it = bucket[i];
+          if (!it) continue;
+          if (
+            String(it.topSym || "")
+              .trim()
+              .toUpperCase() !== sym
+          )
+            continue;
+
+          const pieceQty = Number(it.topAbsQty);
+          if (!isFinite(pieceQty) || pieceQty <= 0) continue;
+
+          const a = toNum(it.topPrice);
+          const b = toNum(matchPrice);
+          if (!isNaN(a) && !isNaN(b) && Math.abs(a - b) > 0.0001) continue;
+
+          let dist = 999999999;
+          if (
+            tradeTs instanceof Date &&
+            !isNaN(tradeTs.getTime()) &&
+            it.topTs instanceof Date &&
+            !isNaN(it.topTs.getTime())
+          ) {
+            dist = Math.abs(it.topTs.getTime() - tradeTs.getTime());
+          }
+
+          pieces.push({
+            it: it,
+            bucket: bucket,
+            idx: i,
+            dtKey: dtKey,
+            pieceQty: pieceQty,
+            dist: dist,
+          });
+        }
+      }
+
+      debug.counts.symbolCandidatesNearby = pieces.length;
+
+      if (!pieces.length) return null;
+
+      // Closest prints first, then earlier-in-bucket as a tie-break.
+      pieces.sort(function (a, b) {
+        if (a.dist !== b.dist) return a.dist - b.dist;
+        if (a.dtKey !== b.dtKey) return a.idx - b.idx;
+        return a.idx - b.idx;
+      });
+
+      const picked = [];
+      let sumQty = 0;
+      for (let i = 0; i < pieces.length; i++) {
+        const piece = pieces[i];
+        if (sumQty + piece.pieceQty > wantQty) continue;
+        picked.push(piece);
+        sumQty += piece.pieceQty;
+        if (sumQty === wantQty) break;
+      }
+
+      debug.counts.partialFillQtySum = sumQty;
+      debug.counts.partialFillPicked = picked.length;
+
+      if (sumQty !== wantQty || !picked.length) return null;
+
+      let sumMiscFees = 0;
+      let sumFeesComm = 0;
+      let sumAmount = 0;
+      let sawMiscFees = false;
+      let sawFeesComm = false;
+      let sawAmount = false;
+
+      // Remove last-in-bucket first so earlier indexes stay valid.
+      picked.sort(function (a, b) {
+        if (a.dtKey !== b.dtKey) return a.dtKey < b.dtKey ? -1 : 1;
+        return b.idx - a.idx;
+      });
+
+      for (let i = 0; i < picked.length; i++) {
+        const piece = picked[i];
+        const removed = piece.bucket.splice(piece.idx, 1)[0];
+        if (!removed) continue;
+        removeFromExactIndex(removed);
+
+        const mf = toNum(removed.miscFees);
+        const fc = toNum(removed.feesComm);
+        const am = toNum(removed.amount);
+        if (!isNaN(mf)) {
+          sumMiscFees += mf;
+          sawMiscFees = true;
+        }
+        if (!isNaN(fc)) {
+          sumFeesComm += fc;
+          sawFeesComm = true;
+        }
+        if (!isNaN(am)) {
+          sumAmount += am;
+          sawAmount = true;
+        }
+      }
+
+      debug.why =
+        "Matched partial fills: same symbol + same price, qty pieces sum to TosTrades qty.";
+
+      return {
+        item: {
+          miscFees: sawMiscFees ? sumMiscFees : "",
+          feesComm: sawFeesComm ? sumFeesComm : "",
+          amount: sawAmount ? sumAmount : "",
+          matchedBy: "partialFillQtySum",
+          matchedKey: minuteKey,
+          pickedCount: picked.length,
+        },
+        debug: debug,
+      };
+    }
+
     function pullTopTradeEnrichment(
       Account,
       tradeTs,
@@ -346,8 +502,27 @@ function buildUnifiedImportV3() {
 
       debug.counts.symQtyCandidates = candidates.length;
 
+      // Partial fills: TosTrades has the order total (e.g. -2, -76, -50).
+      // TosTop often splits that into 2+ TRD rows (e.g. -1 and -1, or -10 and -66).
+      // Those pieces can land in the same second, a few seconds apart, or across
+      // the minute boundary. Do not treat that as "symbol missing in this minute."
       if (!candidates.length) {
-        debug.why = "Minute bucket had TRD rows, but none matched symbol+qty.";
+        const partial = pullPartialFillEnrichment_(
+          al,
+          dateIso,
+          tradeTs,
+          minuteKey,
+          s,
+          q,
+          matchPrice,
+          debug,
+        );
+        if (partial && partial.item) {
+          return partial;
+        }
+
+        debug.why =
+          "Minute bucket had TRD rows, but none matched symbol+qty (and no partial-fill qty sum).";
         return { item: null, debug: debug };
       }
 
