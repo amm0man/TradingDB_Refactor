@@ -858,24 +858,41 @@ function tosReadCsvFileToRows(file) {
  * Parses a single TOS Trades CSV file.
  *
  * Key behaviors:
+ *   - Reads the Drive file via tosReadCsvFileToRows
  *   - Locates the real header row (must contain both "Exec Time" and "Spread")
  *   - Stops when it sees a blank row followed by "EQUITIES" in column A
  *   - Also hard-stops if it sees "OPTIONS" or "PROFITS AND LOSSES"
  *   - Returns { header, rows } or null if the file cannot be parsed
  *
  * Called by tosTradesImportFromFolder for every CSV in the folder.
+ * Section-finding lives in tosTradesParseRows so a later single-pass
+ * walk can reuse one grid for both TosTop and TosTrades.
  */
 function tosTradesParseOneCsvFile(file, ctx) {
   const grid = tosReadCsvFileToRows(file);
+  return tosTradesParseRows(grid, ctx);
+}
+
+/**
+ * Finds the TosTrades section inside an already-parsed CSV grid.
+ * Does not read Drive. grid comes from tosReadCsvFileToRows (or, later,
+ * from a single shared read).
+ *
+ * @param {Array<Array<*>>} grid
+ * @param {*} ctx  unused today; kept so the file wrapper signature stays stable
+ * @returns {{header: string[], rows: string[][]}|null}
+ */
+function tosTradesParseRows(grid, ctx) {
+  if (!grid || !grid.length) return null;
 
   // Find header row containing Exec Time + Spread
   let headerRowIdx = -1;
   let startCol = -1;
 
   for (let r = 0; r < grid.length; r++) {
-    const row = grid[r].map((v) => (v == null ? "" : String(v).trim()));
-    const execIdx = row.indexOf("Exec Time");
-    const spreadIdx = row.indexOf("Spread");
+    const row = grid[r].map(v => (v == null ? '' : String(v).trim()));
+    const execIdx = row.indexOf('Exec Time');
+    const spreadIdx = row.indexOf('Spread');
 
     if (execIdx !== -1 && spreadIdx !== -1) {
       headerRowIdx = r;
@@ -886,25 +903,23 @@ function tosTradesParseOneCsvFile(file, ctx) {
 
   if (headerRowIdx < 0) return null;
 
-  const fullHeader = grid[headerRowIdx].map((v) =>
-    v == null ? "" : String(v).trim(),
-  );
+  const fullHeader = grid[headerRowIdx].map(v => (v == null ? '' : String(v).trim()));
   const header = fullHeader.slice(startCol);
 
-  const idxSide = header.indexOf("Side");
-  const idxSymbol = header.indexOf("Symbol");
-  const idxQty = header.indexOf("Qty");
-  const idxPrice = header.indexOf("Price");
+  const idxSide = header.indexOf('Side');
+  const idxSymbol = header.indexOf('Symbol');
+  const idxQty = header.indexOf('Qty');
+  const idxPrice = header.indexOf('Price');
 
   const rows = [];
   let sawBlank = false;
 
   function isBlankRawRow(raw) {
-    return raw.every((v) => String(v ?? "").trim() === "");
+    return raw.every(v => String(v ?? '').trim() === '');
   }
 
   for (let r = headerRowIdx + 1; r < grid.length; r++) {
-    const raw = grid[r].map((v) => (v == null ? "" : String(v).trim()));
+    const raw = grid[r].map(v => (v == null ? '' : String(v).trim()));
 
     // Track blank rows (before slicing)
     if (isBlankRawRow(raw)) {
@@ -912,15 +927,13 @@ function tosTradesParseOneCsvFile(file, ctx) {
       continue;
     }
 
-    const colA = String(raw[0] || "")
-      .trim()
-      .toUpperCase();
+    const colA = String(raw[0] || '').trim().toUpperCase();
 
     // Stop rule: blank row followed by "EQUITIES" in column A
-    if (sawBlank && colA === "EQUITIES") break;
+    if (sawBlank && colA === 'EQUITIES') break;
 
     // Hard stops for other sections that appear after the trade table
-    if (colA === "OPTIONS" || colA === "PROFITS AND LOSSES") break;
+    if (colA === 'OPTIONS' || colA === 'PROFITS AND LOSSES') break;
 
     sawBlank = false;
 
@@ -928,33 +941,23 @@ function tosTradesParseOneCsvFile(file, ctx) {
     let row = raw.slice(startCol);
 
     // Skip repeated header rows mid-file
-    if (
-      String(row[0] || "")
-        .trim()
-        .toUpperCase() === "EXEC TIME"
-    )
-      continue;
+    if (String(row[0] || '').trim().toUpperCase() === 'EXEC TIME') continue;
 
     if (tosTradesIsRowBlank(row)) continue;
 
     // Normalize length
-    while (row.length < header.length) row.push("");
+    while (row.length < header.length) row.push('');
     if (row.length > header.length) row.length = header.length;
 
     // Keep only trade-ish rows (BUY/SELL + symbol present)
-    const side =
-      idxSide >= 0
-        ? String(row[idxSide] || "")
-            .trim()
-            .toUpperCase()
-        : "";
-    const symbol = idxSymbol >= 0 ? String(row[idxSymbol] || "").trim() : "";
+    const side = idxSide >= 0 ? String(row[idxSide] || '').trim().toUpperCase() : '';
+    const symbol = idxSymbol >= 0 ? String(row[idxSymbol] || '').trim() : '';
 
     if (!/^(BUY|SELL)$/.test(side)) continue;
     if (!symbol) continue;
 
     // Exec Time validation only if populated (legs may be blank)
-    const execStr = String(row[0] || "").trim();
+    const execStr = String(row[0] || '').trim();
     if (execStr) {
       const dt = tosTradesParseExecTime(execStr);
       if (!dt || isNaN(dt.getTime()) || dt.getFullYear() < 2000) continue;
@@ -962,9 +965,9 @@ function tosTradesParseOneCsvFile(file, ctx) {
 
     // Qty validation only if populated
     if (idxQty >= 0) {
-      const qtyStr = String(row[idxQty] || "").trim();
+      const qtyStr = String(row[idxQty] || '').trim();
       if (qtyStr) {
-        const q = Number(qtyStr.replace(/[$,]/g, ""));
+        const q = Number(qtyStr.replace(/[$,]/g, ''));
         if (!isFinite(q) || q === 0) continue;
       }
     }
@@ -1503,25 +1506,39 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
  * Parses a single TOS Top-of-Book / Account Statement CSV file.
  *
  * Key behaviors:
+ *   - Reads the Drive file via tosReadCsvFileToRows
  *   - Locates the real header row (must contain "DATE", "TIME", and "DESCRIPTION")
- *   - Handles both comma-separated and tab-separated files
- *   - Strips BOM if present
  *   - Returns { header, rows } or null if the file cannot be parsed
  *
  * Called by tosTopImportFromFolder for every CSV in the folder.
+ * Section-finding lives in tosTopParseRows so a later single-pass
+ * walk can reuse one grid for both TosTop and TosTrades.
  */
 function tosTopParseOneCsvFile(file) {
   const grid = tosReadCsvFileToRows(file);
+  return tosTopParseRows(grid);
+}
+
+/**
+ * Finds the TosTop section inside an already-parsed CSV grid.
+ * Does not read Drive. grid comes from tosReadCsvFileToRows (or, later,
+ * from a single shared read).
+ *
+ * @param {Array<Array<*>>} grid
+ * @returns {{header: string[], rows: string[][]}|null}
+ */
+function tosTopParseRows(grid) {
+  if (!grid || !grid.length) return null;
 
   // Find header row containing DATE + TIME + DESCRIPTION
   let headerRowIdx = -1;
   let startCol = -1;
 
   for (let r = 0; r < grid.length; r++) {
-    const row = grid[r].map((v) => (v == null ? "" : String(v).trim()));
-    const dateIdx = row.indexOf("DATE");
-    const timeIdx = row.indexOf("TIME");
-    const descIdx = row.indexOf("DESCRIPTION");
+    const row = grid[r].map(v => (v == null ? '' : String(v).trim()));
+    const dateIdx = row.indexOf('DATE');
+    const timeIdx = row.indexOf('TIME');
+    const descIdx = row.indexOf('DESCRIPTION');
 
     if (dateIdx !== -1 && timeIdx !== -1 && descIdx !== -1) {
       headerRowIdx = r;
@@ -1532,26 +1549,22 @@ function tosTopParseOneCsvFile(file) {
 
   if (headerRowIdx < 0) return null;
 
-  const fullHeader = grid[headerRowIdx].map((v) =>
-    v == null ? "" : String(v).trim(),
-  );
+  const fullHeader = grid[headerRowIdx].map(v => (v == null ? '' : String(v).trim()));
   const header = fullHeader.slice(startCol);
 
-  const idxDesc = header.indexOf("DESCRIPTION");
+  const idxDesc = header.indexOf('DESCRIPTION');
   const rows = [];
 
   for (let r = headerRowIdx + 1; r < grid.length; r++) {
-    let row = grid[r]
-      .map((v) => (v == null ? "" : String(v).trim()))
-      .slice(startCol);
+    let row = grid[r].map(v => (v == null ? '' : String(v).trim())).slice(startCol);
 
-    while (row.length < header.length) row.push("");
+    while (row.length < header.length) row.push('');
     if (row.length > header.length) row.length = header.length;
 
     if (tosTradesIsRowBlank(row)) break;
 
-    const desc = idxDesc >= 0 ? String(row[idxDesc] || "").trim() : "";
-    if (desc.toUpperCase() === "TOTAL") break;
+    const desc = (idxDesc >= 0 ? String(row[idxDesc] || '').trim() : '');
+    if (desc.toUpperCase() === 'TOTAL') break;
 
     rows.push(row);
   }
