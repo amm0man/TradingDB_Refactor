@@ -197,14 +197,6 @@ function tosMaybeDebugAlert(message) {
   }
 }
 
-function tosUiAlertSafe(message) {
-  try {
-    SpreadsheetApp.getUi().alert(String(message || ""));
-  } catch (e) {
-    Logger.log("tosUiAlertSafe (no UI): " + message);
-  }
-}
-
 function tosSetCsvFolderIdLT() {
   tosSetFolderId(
     "TOS CSV Folder ID (LT — TosTop + TosTrades)",
@@ -874,7 +866,7 @@ function tosTopCollectNormalizedRows(parsed, file, Account, ctx, rowsAll) {
     const dateRaw = r[idxDate];
     const dateStr = tosTopNormalizeDateToIso(dateRaw);
     const timeRaw = String(r[idxTime] ?? "").trim();
-    const timeHHmmssEt = tosTopNormalizeTimeToHHmmss(timeRaw);
+    const timeHHmmssEt = normalizeTimeHHmmss(timeRaw);
     const timeHHmmss = tosEtToCtHHmmss(timeHHmmssEt, dateStr ?? "");
     r[idxTime] = timeHHmmss;
 
@@ -1048,7 +1040,7 @@ function tosTopWriteCombinedFromParsed(
         const s = String(timeRawVal.getSeconds()).padStart(2, "0");
         timeRawStr = h + m + s;
       } else {
-        timeRawStr = tosTopNormalizeTimeToHHmmss(
+        timeRawStr = normalizeTimeHHmmss(
           String(timeRawVal ?? "").trim(),
         );
       }
@@ -1669,10 +1661,6 @@ function tosTopParseRows(grid) {
   return { header: header, rows: rows };
 }
 
-function tosTopNormalizeTimeToHHmmss(timeStr) {
-  return normalizeTimeHHmmss(timeStr);
-}
-
 function tosTopParseDateTimeMinute(dateStr, hhmmOrHhmmss) {
   // Name is historical. Accepts yyyy-MM-dd or m/d/yyyy plus HHmm / HHmmss.
   // Caller already applied ET→CT to TIME, so do not shift again.
@@ -2033,7 +2021,7 @@ function pushTosTopCombinedToTosTop() {
 
       const timeRaw = String(row[idx.time] ?? "").trim();
 
-      const timeHHmmss = tosTopNormalizeTimeToHHmmss(timeRaw);
+      const timeHHmmss = normalizeTimeHHmmss(timeRaw);
 
       if (timeRaw && !timeHHmmss) {
         importIssuesAdd(

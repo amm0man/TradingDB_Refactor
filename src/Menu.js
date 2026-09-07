@@ -6,10 +6,11 @@
  * This file contains only the menu definition (onOpen).
  * All actual processing logic lives in the phase folders and in DBTools.js.
  *
- * Menu structure:
+  * Menu structure:
  *   DB Tools
  *   ├── Manual Entry
- *   ├── Raw Data for Sorting   (TOS / Schwab import pipeline)
+ *   ├── Raw Data for Sorting   (TOS ingest: folders, single-pass, push, FULL)
+ *   │     └── Legacy             (old one-section TosTop / TosTrades walks)
  *   ├── Schwab Actions         (Phase 1 + Phase 2 + settings)
  *   └── Data Actions           (Phase 3 + Master utilities)
  *
@@ -28,14 +29,9 @@ function onOpen() {
     .createMenu("Manual Entry")
     .addItem("Send Entry to Import", "sendEntryToImport");
 
-  // Raw Data for Sorting submenu (TOS ingest)
-  const TosSchwabImport = ui
-    .createMenu("Raw Data for Sorting")
-    .addItem("Set folder (LT): TosTop + TosTrades", "tosSetCsvFolderIdLT")
-    .addItem("Set folder (DT): TosTop + TosTrades", "tosSetCsvFolderIdDT")
-    .addSeparator()
-
-    // Import raw CSVs -> Combined
+  // Old one-section walks. Kept for fallback; daily work uses single-pass / FULL.
+  const tosLegacyImportMenu = ui
+    .createMenu("Legacy (one section at a time)")
     .addItem(
       "Import TosTrades Current Account → TOS Trades - Combined",
       "tosTradesImportFromFolderCurrentAccount",
@@ -45,8 +41,6 @@ function onOpen() {
       "tosTopImportFromFolderCurrentAccount",
     )
     .addSeparator()
-
-    // Import BOTH accounts -> Combined
     .addItem(
       "Import TosTrades BOTH Accounts → TOS Trades - Combined",
       "tosTradesImportFromFolderBothAccounts",
@@ -54,13 +48,22 @@ function onOpen() {
     .addItem(
       "Import TosTop BOTH Accounts → TOS Top - Combined",
       "tosTopImportFromFolderBothAccounts",
-    )
-        .addItem(
-      "Single-pass BOTH sections Current Account",
+    );
+
+  // Raw Data for Sorting submenu (TOS ingest)
+  const TosSchwabImport = ui
+    .createMenu("Raw Data for Sorting")
+    .addItem("Set folder (LT): TosTop + TosTrades", "tosSetCsvFolderIdLT")
+    .addItem("Set folder (DT): TosTop + TosTrades", "tosSetCsvFolderIdDT")
+    .addSeparator()
+
+    // Normal daily Combined import (one Drive read per CSV)
+    .addItem(
+      "Import BOTH sections Current Account → Combined",
       "tosImportBothSectionsFromFolderCurrentAccount",
     )
     .addItem(
-      "Single-pass BOTH sections BOTH Accounts",
+      "Import BOTH sections BOTH Accounts → Combined",
       "tosImportBothSectionsFromFolderBothAccounts",
     )
     .addSeparator()
@@ -86,9 +89,12 @@ function onOpen() {
     .addItem(
       "Run FULL (BOTH Accounts): CSV → Combined → TosTop/TosTrades → Schwab Import",
       "tosRunFullTosToSchwabImportBothAccounts",
-    );
+    )
+    .addSeparator()
+    .addSubMenu(tosLegacyImportMenu)
 
-  const settingsMenu = ui
+    
+    const settingsMenu = ui
     .createMenu("Settings")
     .addItem("Set Account Mode DT / LT", `promptSetAccountMode`)
     .addItem(
