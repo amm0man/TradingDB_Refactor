@@ -22,6 +22,7 @@
  *
  * Related files:
  *   - BuildUnifiedEnrichment.js    (Group A fee-matching factory)
+ *   - BuildUnifiedIcRetag.js       (Group B IC-retag factory)
  *   - TosSchwabImportPipeline.js   (produces TosTrades / TosTop)
  *   - ImportIssues.js
  *   - SettingsService.js
@@ -183,51 +184,8 @@ function buildUnifiedImportV3() {
     //
     // =========================================================================
 
-    // ====================== NEW NESTED HELPER #5: decideIcRetag ======================
-    // All IC inheritance logic lives here now — much easier for a newer scripter to read.
-    // Called once per row in the main trade loop.
-    function decideIcRetag(
-      Account,
-      ts,
-      symForMatch,
-      expKey,
-      posEffect,
-      spreadOriginal,
-      lifeBundleKey,
-    ) {
-      const wantsIc =
-        canonicalSpreadByLifecycleBundleKey[lifeBundleKey] === CANONICAL_IC;
-
-      if (!wantsIc) return spreadOriginal; // no change
-
-      if (!isRetagCandidateOriginalSpread(spreadOriginal))
-        return spreadOriginal;
-      if (!isCloseLikeBundle(posEffect, spreadOriginal)) return spreadOriginal;
-
-      const legsSorted = setToSortedArray(
-        lifecycleBundleLegSetByKey[lifeBundleKey] || {},
-      );
-      if (!legsSorted.length) return spreadOriginal;
-
-      let hasOpenIcEvidence = false;
-      for (let j = 0; j < legsSorted.length; j++) {
-        const legId = legsSorted[j];
-        const k = makeIcLegQtyKey(Account, symForMatch, expKey, legId);
-        if (Number(openIcQtyByLegKey[k] || 0) > 0) {
-          hasOpenIcEvidence = true;
-          break;
-        }
-      }
-
-      if (hasOpenIcEvidence) {
-        spreadRetaggedRowsCount++;
-        return CANONICAL_IC;
-      } else {
-        spreadRetagSkippedNoOpenIcCount++;
-        return spreadOriginal; // keep original
-      }
-    }
-    // ====================== END IC RETAG HELPER ======================
+    // Group B decideIcRetag now lives in BuildUnifiedIcRetag.js
+    // (createIcRetagHelpers). Wired in after the 6A maps exist.
 
     /**
      * Reads a sheet into array of objects keyed by the *exact* header text.
@@ -1727,94 +1685,6 @@ function buildUnifiedImportV3() {
 
     const CANONICAL_IC = "IRON CONDOR";
 
-    function isIronCondorSpread(spreadRaw) {
-      return (
-        String(spreadRaw || "")
-          .trim()
-          .toUpperCase() === CANONICAL_IC
-      );
-    }
-
-    // Only retag these “generic” labels (prevents retagging BUTTERFLY/CALENDAR/DIAGONAL/etc).
-    function isRetagCandidateOriginalSpread(spreadRaw) {
-      const s = String(spreadRaw || "")
-        .trim()
-        .toUpperCase();
-      return s === "" || s === "SINGLE" || s === "VERTICAL";
-    }
-
-    // “Close-like” = anything that reduces/removes the option position.
-    function isCloseLikeBundle(posEffectRaw, spreadRaw) {
-      const pe = String(posEffectRaw || "")
-        .trim()
-        .toUpperCase();
-      const sp = String(spreadRaw || "")
-        .trim()
-        .toUpperCase();
-
-      if (pe.includes("CLOSE")) return true;
-      if (pe.includes("ASSIGN") || pe.includes("EXERCISE")) return true;
-
-      // Fallback if TOS encodes this in Spread instead of Pos Effect.
-      if (sp === "ASSIGN" || sp === "EXERCISE") return true;
-
-      return false;
-    }
-
-    // Bundle key = one execution “bundle” (same timestamp/account/symbol/exp/posEffect).
-    // We intentionally include Exp so we don’t accidentally tie a CLOSE to the wrong expiry.
-    function makeLifecycleBundleKey(
-      Account,
-      ts,
-      symForMatch,
-      expKey,
-      posEffect,
-    ) {
-      const acc = String(Account || "")
-        .trim()
-        .toUpperCase();
-      const sym = String(symForMatch || "")
-        .trim()
-        .toUpperCase();
-      const pe = String(posEffect || "")
-        .trim()
-        .toUpperCase();
-      const d = normalizeDate(ts);
-      const t = normalizeTimeHHmmss(ts);
-      const e = String(expKey || "").trim();
-      return [acc, d, t, sym, e, pe].join("|");
-    }
-
-    function makeOpenIndexKey(Account, symForMatch, expKey) {
-      const acc = String(Account || "")
-        .trim()
-        .toUpperCase();
-      const sym = String(symForMatch || "")
-        .trim()
-        .toUpperCase();
-      const e = String(expKey || "").trim();
-      return [acc, sym, e].join("|");
-    }
-
-    function legIdFromTypeStrike(typeKey, strikeNum) {
-      const t = String(typeKey || "")
-        .trim()
-        .toUpperCase(); // CALL/PUT
-      const k = roundTo(strikeNum, 4);
-      return [t, String(k)].join(":");
-    }
-
-    function setToSortedArray(setObj) {
-      return Object.keys(setObj || {}).sort();
-    }
-
-    function isSubset(sortedNeedles, haystackSetObj) {
-      for (let i = 0; i < sortedNeedles.length; i++) {
-        if (!haystackSetObj[sortedNeedles[i]]) return false;
-      }
-      return true;
-    }
-
     // bundleKey -> { legId:true }
     const lifecycleBundleLegSetByKey = {};
     // bundleKey -> metadata (spreadRaw, ts, etc.)
@@ -1825,28 +1695,37 @@ function buildUnifiedImportV3() {
     // bundleKey -> chosen OPEN info (for INFO logging)
     const canonicalSpreadChoiceByBundleKey = {};
 
-    // IC-only “inventory” (open contracts count by leg)
-    // key: Account|Underlying|ExpKey|LegId
-    function makeIcLegQtyKey(Account, symForMatch, expKey, legId) {
-      return [
-        String(Account || "")
-          .trim()
-          .toUpperCase(),
-        String(symForMatch || "")
-          .trim()
-          .toUpperCase(),
-        String(expKey || "").trim(),
-        String(legId || "")
-          .trim()
-          .toUpperCase(),
-      ].join("|");
-    }
     const openIcQtyByLegKey = {};
 
     // INFO logging de-dupe + metrics
     const spreadRetagInfoLoggedByBundleKey = {};
-    let spreadRetaggedRowsCount = 0;
-    let spreadRetagSkippedNoOpenIcCount = 0;
+    const icRetagMetrics = {
+      spreadRetaggedRowsCount: 0,
+      spreadRetagSkippedNoOpenIcCount: 0,
+    };
+
+    // Group B: same helper names as before, bound to THESE maps.
+    const _ic = createIcRetagHelpers({
+      canonicalSpreadByLifecycleBundleKey: canonicalSpreadByLifecycleBundleKey,
+      lifecycleBundleLegSetByKey: lifecycleBundleLegSetByKey,
+      openIcQtyByLegKey: openIcQtyByLegKey,
+      icRetagMetrics: icRetagMetrics,
+      CANONICAL_IC: CANONICAL_IC,
+      toStr: toStr,
+      roundTo: roundTo,
+    });
+    const decideIcRetag = _ic.decideIcRetag;
+    const isIronCondorSpread = _ic.isIronCondorSpread;
+    const isRetagCandidateOriginalSpread = _ic.isRetagCandidateOriginalSpread;
+    const isCloseLikeBundle = _ic.isCloseLikeBundle;
+    const makeLifecycleBundleKey = _ic.makeLifecycleBundleKey;
+    const makeOpenIndexKey = _ic.makeOpenIndexKey;
+    const legIdFromTypeStrike = _ic.legIdFromTypeStrike;
+    const setToSortedArray = _ic.setToSortedArray;
+    const isSubset = _ic.isSubset;
+    const makeIcLegQtyKey = _ic.makeIcLegQtyKey;
+    const normalizeExpKey = _ic.normalizeExpKey;
+    const isMultiTypeSpread = _ic.isMultiTypeSpread;
 
     // Pre-pass: compute a per-group "net premium" for multi-leg spreads from TosTrades legs.
     // This lets enrichment match TosTop TRD rows that show the *spread* price (e.g. @.53),
@@ -1872,17 +1751,6 @@ function buildUnifiedImportV3() {
     const customExpAggByCoarseKey = {}; // coarseKey -> { expSet:{}, callN, putN, legN }
     const customExpSigByCoarseKey = {}; // coarseKey -> "yyyy-mm-dd,yyyy-mm-dd" (sorted unique)
     const customMixedExpWarnSeen = {}; // coarseKey -> true (de-dupe warnings)
-
-    // Helper: normalize exp into a stable string used in keys
-    function normalizeExpKey(expRaw) {
-      if (expRaw instanceof Date)
-        return Utilities.formatDate(
-          expRaw,
-          Session.getScriptTimeZone(),
-          "yyyy-MM-dd",
-        );
-      return toStr(expRaw).trim();
-    }
 
     for (let i = 0; i < tradesTbl.rows.length; i++) {
       const row = tradesTbl.rows[i];
@@ -2127,10 +1995,6 @@ function buildUnifiedImportV3() {
     //  Some spreads (like IRON CONDOR) contain BOTH CALL and PUT legs but have ONE TosTop TRD row.
     // For these, we must group across typeKey so we compute the strategy net (e.g. .32) and only
     // attempt enrichment once.
-    function isMultiTypeSpread(spreadU) {
-      const s = toStr(spreadU).trim().toUpperCase();
-      return s === "IRON CONDOR" || s === "STRANGLE" || s === "STRADDLE";
-    }
 
     //  Finalize a stable exp signature for each CUSTOM coarse group.
     Object.keys(customExpAggByCoarseKey).forEach((k) => {
@@ -4317,12 +4181,12 @@ function buildUnifiedImportV3() {
     importIssuesSetMetric(
       ctx,
       "SpreadRetaggedRowsCount",
-      spreadRetaggedRowsCount,
+      icRetagMetrics.spreadRetaggedRowsCount,
     );
     importIssuesSetMetric(
       ctx,
       "SpreadRetagSkippedNoOpenIcCount",
-      spreadRetagSkippedNoOpenIcCount,
+      icRetagMetrics.spreadRetagSkippedNoOpenIcCount,
     );
 
     importIssuesFlush(ctx);
