@@ -25,6 +25,7 @@
  *   - BuildUnifiedIcRetag.js       (Group B IC-retag factory)
  *   - BuildUnifiedSheetFields.js   (Group C sheet/field factory)
  *   - BuildUnifiedSymbols.js       (Group E symbol/option factory)
+ *   - BuildUnifiedExerciseAction.js (Group F exercise/action factory)
  *   - TosSchwabImportPipeline.js   (produces TosTrades / TosTop)
  *   - ImportIssues.js
  *   - SettingsService.js
@@ -178,9 +179,10 @@ function buildUnifiedImportV3() {
     //       normalizeSymbol)
     //
     //   F) Exercise / Assign + Action helpers
-    //      normalizeSpread, isExerciseOrAssignSpread,
-    //      computeSignedAmountFromTrade, actionFromTosTrades,
-    //      formatUnifiedSymbol
+    //      now in BuildUnifiedExerciseAction.js
+    //      (normalizeSpread, isExerciseOrAssignSpread,
+    //       computeSignedAmountFromTrade, actionFromTosTrades,
+    //       formatUnifiedSymbol)
     //
     // Later (after the main sheet loads) you will also see:
     //   • Mapping-sheet loaders (CusipMap, CorpActionStockMap, SplitAdjustments…)
@@ -230,102 +232,17 @@ function buildUnifiedImportV3() {
     const normalizeUnderlyingFromTradeSymbol =
       _syms.normalizeUnderlyingFromTradeSymbol;
     const parseDottedOptionSymbol = _syms.parseDottedOptionSymbol;
-    // ----------------------------
-    // Exercise / Assign normalization helpers
-    // ----------------------------
 
-    // You confirmed contracts are always 100 shares.
-    // If you ever trade non-100 multipliers, this must become symbol-specific.
-    const OPTIONS_CONTRACT_MULTIPLIER = 100;
-
-    // Normalize Spread strings so we have stable tags in Schwab Import.
-    // Examples:
-    // - "EXERCISE STOCK" -> "EXERCISE"
-    // - "ASSIGN STOCK"   -> "ASSIGN"
-    // - "EXERCISE"       -> "EXERCISE"
-    // - "SINGLE"         -> "SINGLE"
-    function normalizeSpread(spreadRaw) {
-      const s = toStr(spreadRaw).trim().toUpperCase();
-      if (!s) return "";
-      if (s.indexOf("EXERCISE") === 0) return "EXERCISE";
-      if (s.indexOf("ASSIGN") === 0 || s.indexOf("ASSIGNMENT") === 0)
-        return "ASSIGN";
-      return s;
-    }
-
-    function isExerciseOrAssignSpread(spreadNorm) {
-      const s = toStr(spreadNorm).trim().toUpperCase();
-      return s === "EXERCISE" || s === "ASSIGN";
-    }
-
-    function computeSignedAmountFromTrade(side, qtyAbs, price) {
-      const s = toStr(side).trim().toUpperCase();
-      const q = toNum(qtyAbs);
-      const p = toNum(price);
-      if (isNaN(q) || isNaN(p)) return "";
-      const gross = q * p;
-      if (s === "BUY") return -gross;
-      if (s === "SELL") return gross;
-      return "";
-    }
-
-    function actionFromTosTrades(side, posEffect, type) {
-      const s = toStr(side).trim().toUpperCase();
-      const p = toStr(posEffect).trim().toUpperCase();
-      const t = toStr(type).trim().toUpperCase();
-
-      const isOption = t === "CALL" || t === "PUT";
-
-      if (isOption) {
-        if (s === "BUY" && p.indexOf("OPEN") >= 0) return "Buy to Open";
-        if (s === "BUY" && p.indexOf("CLOSE") >= 0) return "Buy to Close";
-        if (s === "SELL" && p.indexOf("OPEN") >= 0) return "Sell to Open";
-        if (s === "SELL" && p.indexOf("CLOSE") >= 0) return "Sell to Close";
-        if (s === "BUY") return "Buy";
-        if (s === "SELL") return "Sell";
-        return "";
-      }
-
-      if (s === "BUY") return "Buy";
-      if (s === "SELL") return "Sell";
-      return "";
-    }
-
-    function formatUnifiedSymbol(sym, type, exp, strike) {
-      const s = toStr(sym).trim().toUpperCase();
-      const t = toStr(type).trim().toUpperCase();
-
-      if (t !== "CALL" && t !== "PUT") return s;
-
-      let expStr = "";
-      if (exp instanceof Date) {
-        expStr = Utilities.formatDate(
-          exp,
-          Session.getScriptTimeZone(),
-          "MMddyyyy",
-        );
-      } else {
-        const e = toStr(exp).trim();
-        const us = e.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-        if (us) {
-          const mm = String(parseInt(us[1], 10)).padStart(2, "0");
-          const dd = String(parseInt(us[2], 10)).padStart(2, "0");
-          let yyyy = parseInt(us[3], 10);
-          if (yyyy < 100) yyyy += 2000;
-          expStr = mm + dd + yyyy;
-        } else {
-          expStr = e.replace(/\s+/g, "");
-        }
-      }
-
-      const strikeNum = toNum(strike);
-      const strikeStr = isNaN(strikeNum)
-        ? toStr(strike).trim()
-        : strikeNum.toFixed(2);
-      const cp = t === "CALL" ? "C" : "P";
-
-      return (s + " " + expStr + " " + strikeStr + " " + cp).trim();
-    }
+    // Group F exercise/action helpers live in BuildUnifiedExerciseAction.js.
+    // OPTIONS_CONTRACT_MULTIPLIER is declared in that file (global).
+    const _ex = createExerciseActionHelpers({
+      toStr: toStr,
+    });
+    const normalizeSpread = _ex.normalizeSpread;
+    const isExerciseOrAssignSpread = _ex.isExerciseOrAssignSpread;
+    const computeSignedAmountFromTrade = _ex.computeSignedAmountFromTrade;
+    const actionFromTosTrades = _ex.actionFromTosTrad
+    const formatUnifiedSymbol = _ex.formatUnifiedSymbol;
 
     // =========================================================================
     // 3) READ INPUTS (ALL ACCOUNTS)
