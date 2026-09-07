@@ -6,8 +6,13 @@
  * This file is the home for small, reusable functions that don't own a
  * whole subsystem (unlike ImportIssues, SheetBlanking, or SettingsService).
  *
- * Current contents:
+  * Current contents:
  *   - CUSIP normalization / detection
+ *   - UI-safe alerts
+ *   - Number parsing
+ *   - Header / column helpers
+ *   - Date / time normalization
+ *   - String helper (toStr)
  *
  * Add new helper groups below with a clear section banner.
  * If this file later becomes large or mixed, we can split by topic.
@@ -68,9 +73,18 @@ function testCusipHelpers() {
 }
 
 // =========================================================================
-// (Future groups will go here, e.g. NUMBER HELPERS, UI HELPERS, etc.)
+// STRING HELPERS
+//   Safe "always a string" conversion used by Phase 1 factories and
+//   buildUnifiedImportV3.
 // =========================================================================
 
+/**
+ * Convert any value to a string.
+ * null / undefined → "" so callers can .trim() / .toUpperCase() safely.
+ */
+function toStr(v) {
+  return v === null || v === undefined ? "" : String(v);
+}
 // =========================================================================
 // UI HELPERS
 //   Safe alerts that work from the spreadsheet menu and do not crash when

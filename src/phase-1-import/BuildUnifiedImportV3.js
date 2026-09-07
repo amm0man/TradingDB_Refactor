@@ -81,14 +81,9 @@ function buildUnifiedImportV3() {
 
     // =========================================================================
     // 2) LOCAL HELPERS
-    //    These small functions stay inside buildUnifiedImportV3 so the file
-    //    remains self-contained. They handle string cleaning, CUSIP normalization,
-    //    sheet reading, and safe cell access.
+    //    Sheet lookup + TosTrades table access for this run.
+    //    toStr now lives in Helpers.js (same name, now global).
     // =========================================================================
-
-    function toStr(v) {
-      return v === null || v === undefined ? "" : String(v);
-    }
 
     // Loose find-by-name: trims and lowercases so "CusipMap " still works.
     function getSheetByNameLoose(name) {
@@ -2674,7 +2669,6 @@ function buildUnifiedImportV3() {
     // =========================================================================
     const all = unifiedTrades.concat(unifiedNonTrades);
 
-  
     all.sort((a, b) => {
       // 1) Timestamp is authoritative
       const at = a.Timestamp instanceof Date ? a.Timestamp.getTime() : 0;
