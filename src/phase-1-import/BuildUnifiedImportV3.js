@@ -164,8 +164,9 @@ function buildUnifiedImportV3() {
     //      readSheetObjects, getField, toNum, roundTo, pricesClose
     //
     //   D) Date & time normalization
-    //      normalizeDate, normalizeTime, normalizeTimeHHmmss, toDateObject,
-    //      makeTradeMatchKey
+    //      Shared in Helpers.js: normalizeDate, normalizeTime,
+    //      normalizeTimeHHmmss, toDateObject
+    //      Still nested here: makeTradeMatchKey
     //
     //   E) Symbol & option parsing
     //      normalizeUnderlyingFromTradeSymbol, parseDottedOptionSymbol,
@@ -859,120 +860,9 @@ function buildUnifiedImportV3() {
       return roundTo(x, 2) === roundTo(y, 2);
     }
 
-    function normalizeDate(v) {
-      if (v instanceof Date)
-        return Utilities.formatDate(
-          v,
-          Session.getScriptTimeZone(),
-          "yyyy-MM-dd",
-        );
-      const s = toStr(v).trim();
-      if (!s) return "";
-
-      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
-
-      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-      if (m) {
-        const mm = String(parseInt(m[1], 10)).padStart(2, "0");
-        const dd = String(parseInt(m[2], 10)).padStart(2, "0");
-        let yyyy = parseInt(m[3], 10);
-        if (yyyy < 100) yyyy += 2000;
-        return yyyy + "-" + mm + "-" + dd;
-      }
-
-      const digits = s.replace(/\D/g, "");
-      if (digits.length === 7 || digits.length === 8) {
-        const mm =
-          digits.length === 7
-            ? "0" + digits.substring(0, 1)
-            : digits.substring(0, 2);
-        const dd =
-          digits.length === 7 ? digits.substring(1, 3) : digits.substring(2, 4);
-        const yyyy =
-          digits.length === 7 ? digits.substring(3, 7) : digits.substring(4, 8);
-        if (/^\d{4}$/.test(yyyy)) return yyyy + "-" + mm + "-" + dd;
-      }
-
-      return s; // fallback
-    }
-
-    function normalizeTime(v) {
-      // Returns HHmm (minute precision).
-      // Used for minute-bucket matching (ex: TosTop enrichment fallback buckets).
-
-      if (v instanceof Date)
-        return Utilities.formatDate(v, Session.getScriptTimeZone(), "HHmm");
-
-      const s = toStr(v).trim();
-      if (!s) return "";
-
-      const digits = s.replace(/\D/g, "");
-      if (!digits) return "";
-
-      // If we get HHmmss, take HHmm.
-      if (digits.length >= 6) return digits.substring(0, 4);
-
-      // Otherwise normalize to HHmm.
-      if (digits.length === 1) return ("000" + digits).slice(-4);
-      if (digits.length === 2) return ("00" + digits).slice(-4);
-      if (digits.length === 3) return ("0" + digits).slice(-4);
-      return digits.substring(0, 4).padStart(4, "0");
-    }
-
-    function normalizeTimeHHmmss(v) {
-      // Returns HHmmss (second precision).
-      // Used for Schwab Import display "Time" and as the text counterpart to Timestamp (Timestamp is the primary key).
-
-      if (v instanceof Date)
-        return Utilities.formatDate(v, Session.getScriptTimeZone(), "HHmmss");
-
-      const s = toStr(v).trim();
-      if (!s) return "";
-
-      const digits = s.replace(/\D/g, "");
-      if (!digits) return "";
-
-      // If only HHmm, append seconds "00".
-      if (digits.length <= 4) {
-        const hhmm = digits.padStart(4, "0").slice(-4);
-        return hhmm + "00";
-      }
-
-      // If already has seconds, pad to 6 and take HHmmss.
-      const padded = digits.padStart(6, "0");
-      return padded.substring(0, 6);
-    }
-
-    function toDateObject(yyyyMmDd, hhmmOrHhmmss) {
-      // Accepts HHmm OR HHmmss and returns a real Date used as the authoritative Timestamp.
-
-      const d = toStr(yyyyMmDd).trim();
-      const t = toStr(hhmmOrHhmmss).trim();
-
-      const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (!m) return null;
-
-      const yyyy = parseInt(m[1], 10);
-      const mm = parseInt(m[2], 10);
-      const dd = parseInt(m[3], 10);
-
-      const digits = t.replace(/\D/g, "");
-      if (!digits) return new Date(yyyy, mm - 1, dd, 0, 0, 0, 0);
-
-      const hhmmss =
-        digits.length <= 4
-          ? digits.padStart(4, "0").slice(-4) + "00"
-          : digits.padStart(6, "0").substring(0, 6);
-
-      const HH = parseInt(hhmmss.substring(0, 2), 10);
-      const MIN = parseInt(hhmmss.substring(2, 4), 10);
-      const SS = parseInt(hhmmss.substring(4, 6), 10);
-
-      // Build the Date as TOS wrote it (Eastern Time), then shift to Central Time.
-      // tosEtToCtOffsetMs returns +3,600,000 ms in winter (CST) or 0 ms in summer (CDT).
-      const dEt = new Date(yyyy, mm - 1, dd, HH, MIN, SS, 0);
-      return isNaN(dEt.getTime()) ? null : dEt;
-    }
+    // Date/time helpers now live in src/shared/Helpers.js
+    // (normalizeDate, normalizeTime, normalizeTimeHHmmss, toDateObject).
+    // Same names, so every call below is unchanged.
 
     function makeTradeMatchKey(
       Account,

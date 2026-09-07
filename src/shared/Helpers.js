@@ -246,3 +246,122 @@ function testHeaderHelpers() {
   Logger.log("Trade Date → " + col(map, "Trade Date")); // collapsed spaces
   Logger.log("Missing → " + colOrNull(map, "NoSuchColumn"));
 }
+
+// =========================================================================
+// DATE / TIME HELPERS
+//   One normalize path for Phase 1 Combined writes and Build Unified matching.
+//
+//   normalizeDate(v)          → "yyyy-MM-dd" or "" / raw fallback
+//   normalizeTime(v)          → "HHmm"   (minute bucket)
+//   normalizeTimeHHmmss(v)    → "HHmmss" (second precision)
+//   toDateObject(date, time)  → Date from yyyy-MM-dd + HHmm or HHmmss
+//
+//   These do NOT apply ET→CT. Pipeline helpers tosEtToCtHHmmss /
+//   tosTradesParseExecTimeRaw do that when reading raw TOS Eastern times.
+//   Sheet values in TosTop / TosTrades / Combined are already Central Time.
+// =========================================================================
+
+function normalizeDate(v) {
+  if (v instanceof Date)
+    return Utilities.formatDate(
+      v,
+      Session.getScriptTimeZone(),
+      "yyyy-MM-dd",
+    );
+  const s = v === null || v === undefined ? "" : String(v).trim();
+  if (!s) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (m) {
+    const mm = String(parseInt(m[1], 10)).padStart(2, "0");
+    const dd = String(parseInt(m[2], 10)).padStart(2, "0");
+    let yyyy = parseInt(m[3], 10);
+    if (yyyy < 100) yyyy += 2000;
+    return yyyy + "-" + mm + "-" + dd;
+  }
+
+  const digits = s.replace(/\D/g, "");
+  if (digits.length === 7 || digits.length === 8) {
+    const mm =
+      digits.length === 7
+        ? "0" + digits.substring(0, 1)
+        : digits.substring(0, 2);
+    const dd =
+      digits.length === 7 ? digits.substring(1, 3) : digits.substring(2, 4);
+    const yyyy =
+      digits.length === 7 ? digits.substring(3, 7) : digits.substring(4, 8);
+    if (/^\d{4}$/.test(yyyy)) return yyyy + "-" + mm + "-" + dd;
+  }
+
+  return s;
+}
+
+function normalizeTime(v) {
+  if (v instanceof Date)
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), "HHmm");
+
+  const s = v === null || v === undefined ? "" : String(v).trim();
+  if (!s) return "";
+
+  const digits = s.replace(/\D/g, "");
+  if (!digits) return "";
+
+  if (digits.length >= 6) return digits.substring(0, 4);
+  if (digits.length === 1) return ("000" + digits).slice(-4);
+  if (digits.length === 2) return ("00" + digits).slice(-4);
+  if (digits.length === 3) return ("0" + digits).slice(-4);
+  return digits.substring(0, 4).padStart(4, "0");
+}
+
+function normalizeTimeHHmmss(v) {
+  if (v instanceof Date)
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), "HHmmss");
+
+  const s = v === null || v === undefined ? "" : String(v).trim();
+  if (!s) return "";
+
+  const digits = s.replace(/\D/g, "");
+  if (!digits) return "";
+
+  if (digits.length <= 4) {
+    const hhmm = digits.padStart(4, "0").slice(-4);
+    return hhmm + "00";
+  }
+
+  const padded = digits.padStart(6, "0");
+  return padded.substring(0, 6);
+}
+
+function toDateObject(yyyyMmDd, hhmmOrHhmmss) {
+  const d = yyyyMmDd === null || yyyyMmDd === undefined ? "" : String(yyyyMmDd).trim();
+  const t =
+    hhmmOrHhmmss === null || hhmmOrHhmmss === undefined
+      ? ""
+      : String(hhmmOrHhmmss).trim();
+
+  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+
+  const yyyy = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  const dd = parseInt(m[3], 10);
+
+  const digits = t.replace(/\D/g, "");
+  if (!digits) return new Date(yyyy, mm - 1, dd, 0, 0, 0, 0);
+
+  const hhmmss =
+    digits.length <= 4
+      ? digits.padStart(4, "0").slice(-4) + "00"
+      : digits.padStart(6, "0").substring(0, 6);
+
+  const HH = parseInt(hhmmss.substring(0, 2), 10);
+  const MIN = parseInt(hhmmss.substring(2, 4), 10);
+  const SS = parseInt(hhmmss.substring(4, 6), 10);
+
+  // Already-normalized Central Time from Combined / TosTop / TosTrades.
+  // Do not add tosEtToCtOffsetMs here.
+  const dt = new Date(yyyy, mm - 1, dd, HH, MIN, SS, 0);
+  return isNaN(dt.getTime()) ? null : dt;
+}

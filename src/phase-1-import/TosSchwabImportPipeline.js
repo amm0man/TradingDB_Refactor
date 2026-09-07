@@ -102,34 +102,9 @@ function tosEtToCtHHmmss(hhmmss, dateIso) {
  * @returns {string} e.g. "2022-06-09", or "" if unparseable
  */
 function tosTopNormalizeDateToIso(dateVal) {
-  if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
-    const y = dateVal.getFullYear();
-    const m = String(dateVal.getMonth() + 1).padStart(2, "0");
-    const d = String(dateVal.getDate()).padStart(2, "0");
-    return y + "-" + m + "-" + d;
-  }
-
-  const s = String(dateVal ?? "").trim();
+  const s = normalizeDate(dateVal);
   if (!s) return "";
-
-  // m/d/yyyy OR m/d/yy
-  const match = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
-  if (match) {
-    let yyyy = match[3];
-    if (yyyy.length === 2) {
-      const yy = parseInt(yyyy, 10);
-      yyyy = String(yy >= 70 ? 1900 + yy : 2000 + yy);
-    }
-    return (
-      yyyy + "-" + match[1].padStart(2, "0") + "-" + match[2].padStart(2, "0")
-    );
-  }
-
-  // Already yyyy-MM-dd
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-    return s.substring(0, 10);
-  }
-
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   return "";
 }
 
@@ -1695,79 +1670,13 @@ function tosTopParseRows(grid) {
 }
 
 function tosTopNormalizeTimeToHHmmss(timeStr) {
-  // Returns HHmmss text (second precision) — authoritative for the Timestamp rule.
-  // Called from tosTopImportFromFolder and pushTosTopCombinedToTosTop.
-  // This matches the new raw-data reality where TOS exports now include seconds.
-
-  const raw = String(timeStr ?? "").trim();
-  if (!raw) return "";
-
-  // Case 1: colon time like "08:28:12" or "8:28" or "08:28"
-  // - We want HHmmss.
-  if (raw.indexOf(":") >= 0) {
-    const parts = raw.split(":");
-    const hh = String(parts[0] ?? "")
-      .replace(/\D/g, "")
-      .padStart(2, "0");
-    const mm = String(parts[1] ?? "")
-      .replace(/\D/g, "")
-      .padStart(2, "0");
-    const ss = String(parts[2] ?? "0")
-      .replace(/\D/g, "")
-      .padStart(2, "0");
-    return (hh + mm + ss).substring(0, 6);
-  }
-
-  // Case 2: digits-only forms: "82812", "082812", "0828", "7"
-  const digits = raw.replace(/\D/g, "");
-  if (!digits) return "";
-
-  // Pad to 6 digits, then take HHmmss.
-  // Examples:
-  // - "0828"    -> "000828" -> "000828" (not what we want visually)
-  // So we instead treat 4-digit as HHmm and append "00".
-  if (digits.length <= 4) {
-    const hhmm = digits.padStart(4, "0").slice(-4);
-    return hhmm + "00";
-  }
-
-  // If it already has seconds (5-6+ digits), pad to 6 and take first 6.
-  const padded = digits.padStart(6, "0");
-  return padded.substring(0, 6);
+  return normalizeTimeHHmmss(timeStr);
 }
 
 function tosTopParseDateTimeMinute(dateStr, hhmmOrHhmmss) {
-  // NOTE: Name is historical.
-  // NEW: Accept HHmm OR HHmmss and build a Date with seconds if provided.
-
-  const d = String(dateStr).trim().split("/");
-  if (d.length !== 3) return null;
-
-  const mm = parseInt(d[0], 10);
-  const dd = parseInt(d[1], 10);
-  let yyyy = parseInt(d[2], 10);
-  if (![mm, dd, yyyy].every((n) => isFinite(n))) return null;
-  if (yyyy < 100) yyyy += 2000;
-
-  const rawT = String(hhmmOrHhmmss ?? "").trim();
-  const digits = rawT.replace(/\D/g, "");
-  if (!digits) return new Date(yyyy, mm - 1, dd, 0, 0, 0, 0);
-
-  // HHmmss preferred; HHmm allowed
-  const padded =
-    digits.length <= 4
-      ? digits.padStart(4, "0") + "00"
-      : digits.padStart(6, "0").substring(0, 6);
-
-  const HH = parseInt(padded.substring(0, 2), 10);
-  const MIN = parseInt(padded.substring(2, 4), 10);
-  const SS = parseInt(padded.substring(4, 6), 10);
-
-  if (![HH, MIN, SS].every((n) => isFinite(n))) return null;
-  const dEt = new Date(yyyy, mm - 1, dd, HH, MIN, SS, 0);
-  return isNaN(dEt.getTime())
-    ? dEt
-    : new Date(dEt.getTime() + tosEtToCtOffsetMs(dEt));
+  // Name is historical. Accepts yyyy-MM-dd or m/d/yyyy plus HHmm / HHmmss.
+  // Caller already applied ET→CT to TIME, so do not shift again.
+  return toDateObject(normalizeDate(dateStr), hhmmOrHhmmss);
 }
 
 /** ======================================================================
