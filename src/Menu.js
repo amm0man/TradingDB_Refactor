@@ -55,6 +55,14 @@ function onOpen() {
       "Import TosTop BOTH Accounts → TOS Top - Combined",
       "tosTopImportFromFolderBothAccounts",
     )
+        .addItem(
+      "Single-pass BOTH sections Current Account",
+      "tosImportBothSectionsFromFolderCurrentAccount",
+    )
+    .addItem(
+      "Single-pass BOTH sections BOTH Accounts",
+      "tosImportBothSectionsFromFolderBothAccounts",
+    )
     .addSeparator()
 
     // Blank/reset staging

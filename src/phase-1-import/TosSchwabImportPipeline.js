@@ -325,8 +325,7 @@ function tosRunFullTosToSchwabImportBothAccounts() {
   setSetting("ACTIVE_IMPORT_RUN_ID", pipelineRunId);
 
   try {
-    tosTradesImportFromFolderBothAccounts();
-    tosTopImportFromFolderBothAccounts();
+    tosImportBothSectionsFromFolderBothAccounts();
     pushTosCombinedToBoth();
     buildUnifiedImportV3();
   } finally {
@@ -346,6 +345,157 @@ function tosTradesImportFromFolderCurrentAccount() {
 function tosTopImportFromFolderCurrentAccount() {
   const Account = tosGetCurrentAccount(); // "DT" or "LT"
   tosTopImportFromFolder(tosGetAccountFolderIdPropKey(Account), Account);
+}
+
+function tosImportBothSectionsFromFolderCurrentAccount() {
+  const Account = tosGetCurrentAccount();
+  tosImportBothSectionsFromFolder(
+    tosGetAccountFolderIdPropKey(Account),
+    Account,
+  );
+}
+
+function tosImportBothSectionsFromFolderBothAccounts() {
+  tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
+  tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+}
+
+/**
+ * One Drive list + one Drive read per CSV.
+ * Parses TosTop and TosTrades from the same grid, then reuses the
+ * existing Combined write tails.
+ *
+ * Not wired into tosRunFullTosToSchwabImportBothAccounts until Combined
+ * row counts match a two-walk run.
+ */
+function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  const tradesCtx = importIssuesStart("tosImportBothSectionsFromFolder:Trades");
+  const topCtx = importIssuesStart("tosImportBothSectionsFromFolder:Top");
+
+  importIssuesSetMetric(tradesCtx, "Account", Account || "");
+  importIssuesSetMetric(topCtx, "Account", Account || "");
+  importIssuesSetMetric(
+    tradesCtx,
+    "OutputSheet",
+    tosConfig.tradesCombinedSheetName,
+  );
+  importIssuesSetMetric(topCtx, "OutputSheet", tosConfig.topCombinedSheetName);
+  importIssuesSetMetric(tradesCtx, "FolderIdPropKey", folderIdPropKey || "");
+  importIssuesSetMetric(topCtx, "FolderIdPropKey", folderIdPropKey || "");
+
+  try {
+    // Resolve/list errors use the Trades ctx (same as the old trades walk).
+    const resolved = tosResolveAccountCsvFolder(
+      folderIdPropKey,
+      Account,
+      tradesCtx,
+    );
+    if (!resolved) return;
+
+    const folder = resolved.folder;
+    const folderId = resolved.folderId;
+    const folderName = resolved.folderName;
+
+    importIssuesSetMetric(topCtx, "FolderIdUsed", folderId || "");
+    importIssuesSetMetric(topCtx, "FolderNameUsed", folderName || "");
+
+    tosMaybeDebugAlert(
+      "tosImportBothSectionsFromFolder DEBUG\n\nAccount: " +
+        (Account || "") +
+        "\nFolderIdPropKey: " +
+        folderIdPropKey +
+        "\nFolderIdUsed: " +
+        folderId +
+        "\nFolderNameUsed: " +
+        folderName,
+    );
+
+    const csvFiles = tosListCsvFilesInFolder(folder, tradesCtx);
+    if (!csvFiles) return;
+
+    importIssuesSetMetric(topCtx, "FilesFound", csvFiles.length);
+    importIssuesSetMetric(
+      topCtx,
+      "FirstCsvFile",
+      csvFiles[0] && csvFiles[0].getName() ? csvFiles[0].getName() : "",
+    );
+
+    let tradesAllRows = [];
+    let tradesHeader = null;
+    let topRowsAll = [];
+    let topHeader = null;
+
+    for (let i = 0; i < csvFiles.length; i++) {
+      const file = csvFiles[i];
+      const grid = tosReadCsvFileToRows(file);
+
+      const tradesParsed = tosTradesParseRows(grid, tradesCtx);
+      if (tradesParsed && tradesParsed.rows && tradesParsed.rows.length) {
+        importIssuesSetMetric(
+          tradesCtx,
+          "ParsedRowsTotal",
+          Number(tradesCtx.metrics.ParsedRowsTotal || 0) +
+            tradesParsed.rows.length,
+        );
+        if (!tradesHeader) tradesHeader = tradesParsed.header;
+        tradesParsed.rows.forEach((r) => {
+          tradesAllRows.push({
+            Account: Account || "",
+            sourceFile: file.getName(),
+            row: r,
+          });
+        });
+      }
+
+      const topParsed = tosTopParseRows(grid);
+      const headerFromFile = tosTopCollectNormalizedRows(
+        topParsed,
+        file,
+        Account,
+        topCtx,
+        topRowsAll,
+      );
+      if (headerFromFile && !topHeader) topHeader = headerFromFile;
+    }
+
+    tosTradesWriteCombinedFromParsed(
+      tradesCtx,
+      Account,
+      folderIdPropKey,
+      folderName,
+      csvFiles.length,
+      tradesAllRows,
+      tradesHeader,
+    );
+
+    tosTopWriteCombinedFromParsed(
+      topCtx,
+      Account,
+      folderIdPropKey,
+      folderName,
+      csvFiles.length,
+      topRowsAll,
+      topHeader,
+    );
+  } catch (err) {
+    importIssuesAdd(
+      tradesCtx,
+      "ERROR",
+      "",
+      "",
+      "Exception",
+      "",
+      String(err && err.stack ? err.stack : err),
+    );
+    importIssuesFlush(tradesCtx);
+    importIssuesFlush(topCtx);
+    throw err;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
@@ -384,7 +534,7 @@ function tosResolveAccountCsvFolder(folderIdPropKey, Account, ctx) {
       "",
       "FolderIdPropKey",
       "",
-      "Missing folderIdPropKey argument."
+      "Missing folderIdPropKey argument.",
     );
     importIssuesFlush(ctx);
     tosUiAlertSafe("Folder ID prop key was not provided.");
@@ -402,7 +552,7 @@ function tosResolveAccountCsvFolder(folderIdPropKey, Account, ctx) {
       "",
       "FolderId",
       "",
-      "Folder ID not set for key: " + folderIdPropKey
+      "Folder ID not set for key: " + folderIdPropKey,
     );
     importIssuesFlush(ctx);
     tosUiAlertSafe("Folder ID not set. Run the folder setup menu item first.");
@@ -445,7 +595,15 @@ function tosListCsvFilesInFolder(folder, ctx) {
   importIssuesSetMetric(ctx, "FilesFound", csvFiles.length);
 
   if (!csvFiles.length) {
-    importIssuesAdd(ctx, "WARN", "", "", "Files", "", "No CSV-like files found in the folder.");
+    importIssuesAdd(
+      ctx,
+      "WARN",
+      "",
+      "",
+      "Files",
+      "",
+      "No CSV-like files found in the folder.",
+    );
     importIssuesFlush(ctx);
     tosUiAlertSafe("No CSV-like files found in folder.");
     return null;
@@ -458,10 +616,527 @@ function tosListCsvFilesInFolder(folder, ctx) {
   importIssuesSetMetric(
     ctx,
     "FirstCsvFile",
-    csvFiles[0] && csvFiles[0].getName() ? csvFiles[0].getName() : ""
+    csvFiles[0] && csvFiles[0].getName() ? csvFiles[0].getName() : "",
   );
 
   return csvFiles;
+}
+
+/** ======================================================================
+ *  COMBINED WRITE TAILS
+ *  Shared by the old one-section walks and the new single-pass import.
+ *  These do NOT take a script lock. The caller already holds it.
+ *  ====================================================================== */
+
+/**
+ * Fill-down, dedupe, sort, and write "TOS Trades - Combined"
+ * from already-tagged parsed rows.
+ *
+ * allRows items: { Account, sourceFile, row }
+ */
+function tosTradesWriteCombinedFromParsed(
+  ctx,
+  Account,
+  folderIdPropKey,
+  folderName,
+  fileCount,
+  allRows,
+  canonicalHeader,
+) {
+  if (!canonicalHeader) {
+    importIssuesAdd(
+      ctx,
+      "ERROR",
+      "",
+      "",
+      "Header",
+      "",
+      'Could not find "Exec Time" + "Spread" header row in any CSV.',
+    );
+    importIssuesFlush(ctx);
+    tosUiAlertSafe(
+      'Could not find the "Exec Time / Spread / ..." header row in any CSV.',
+    );
+    return;
+  }
+
+  // Fill-down Exec Time + Spread within each file (never carry to next file)
+  const idxExec = canonicalHeader.indexOf("Exec Time");
+  const idxSpread = canonicalHeader.indexOf("Spread");
+  if (idxExec < 0 || idxSpread < 0) {
+    throw new Error("Trades header missing Exec Time or Spread.");
+  }
+
+  let lastExec = "";
+  let lastSpread = "";
+  let lastFile = "";
+
+  for (let i = 0; i < allRows.length; i++) {
+    const obj = allRows[i];
+    const r = obj.row;
+
+    if (obj.sourceFile !== lastFile) {
+      lastFile = obj.sourceFile;
+      lastExec = "";
+      lastSpread = "";
+    }
+
+    if (tosTradesIsRowBlank(r)) {
+      ctx.metrics.BlankRowsSkipped++;
+      ctx.metrics.TotalRowsSkipped++;
+      continue;
+    }
+
+    const execVal = String(r[idxExec] ?? "").trim();
+    const spreadVal = String(r[idxSpread] ?? "").trim();
+
+    if (execVal) lastExec = execVal;
+    else r[idxExec] = lastExec;
+
+    if (spreadVal) lastSpread = spreadVal;
+    else r[idxSpread] = lastSpread;
+  }
+
+  // Dedupe: overlap-safe but preserves legitimate duplicates within a single file.
+  // IMPORTANT: The key includes Account so LT/DT identical trades never collapse each other.
+  const bucketsByKey = {}; // key -> { rowTemplate, countsByFile: { [fileName]: n }, Account }
+
+  for (let i = 0; i < allRows.length; i++) {
+    const obj = allRows[i];
+    const r = obj.row;
+
+    if (tosTradesIsRowBlank(r)) continue;
+
+    const accountKey = String(obj.Account || "");
+    const rowKey = r.join("\u0001");
+    const key = accountKey + "\u0001" + rowKey;
+
+    if (!bucketsByKey[key]) {
+      bucketsByKey[key] = {
+        rowTemplate: r.slice(),
+        countsByFile: {},
+        Account: accountKey,
+      };
+    }
+
+    const f = obj.sourceFile || "";
+    bucketsByKey[key].countsByFile[f] =
+      (bucketsByKey[key].countsByFile[f] || 0) + 1;
+  }
+
+  const deduped = []; // { Account, sourceFile, row }
+
+  const keys = Object.keys(bucketsByKey);
+  ctx.metrics.CombinedRowsTotal = allRows.length;
+  ctx.metrics.UniqueKeys = keys.length;
+
+  for (let k = 0; k < keys.length; k++) {
+    const key = keys[k];
+    const bucket = bucketsByKey[key];
+
+    let bestFile = "";
+    let bestCount = 0;
+
+    const fileNames = Object.keys(bucket.countsByFile);
+    for (let i = 0; i < fileNames.length; i++) {
+      const f = fileNames[i];
+      const c = bucket.countsByFile[f] || 0;
+
+      if (c > bestCount) {
+        bestCount = c;
+        bestFile = f;
+      } else if (c === bestCount && f < bestFile) {
+        bestFile = f;
+      }
+    }
+
+    for (let n = 0; n < bestCount; n++) {
+      deduped.push({
+        Account: bucket.Account,
+        sourceFile: bestFile,
+        row: bucket.rowTemplate.slice(),
+      });
+    }
+  }
+
+  ctx.metrics.DedupedRows = deduped.length;
+
+  deduped.sort((a, b) => {
+    const da = tosTradesParseExecTime(a.row[idxExec]);
+    const db = tosTradesParseExecTime(b.row[idxExec]);
+
+    if (da && db) return da - db;
+    if (da && !db) return -1;
+    if (!da && db) return 1;
+
+    const al = (a.Account || "").localeCompare(b.Account || "");
+    if (al !== 0) return al;
+
+    const fa = a.sourceFile || "";
+    const fb = b.sourceFile || "";
+    if (fa !== fb) return fa.localeCompare(fb);
+
+    return a.row.join("|").localeCompare(b.row.join("|"));
+  });
+
+  const newOut = [];
+  const outHeader = ["Account", "SourceFile", ...canonicalHeader, "TimeRaw"];
+  newOut.push(outHeader);
+
+  let execTimeMissingSecondsCount = 0;
+  let execTimeWithSecondsCount = 0;
+
+  for (let i = 0; i < deduped.length; i++) {
+    const obj = deduped[i];
+
+    const rowCopy = obj.row.slice();
+    const idxSymbolInCanonical = canonicalHeader.indexOf("Symbol");
+    if (idxSymbolInCanonical >= 0)
+      rowCopy[idxSymbolInCanonical] = String(
+        rowCopy[idxSymbolInCanonical] ?? "",
+      ).trim();
+
+    const timeRaw = idxExec >= 0 ? String(rowCopy[idxExec] ?? "").trim() : "";
+
+    const hasSeconds = /\d{2}[AP]?M?$/i.test(timeRaw);
+    if (timeRaw) {
+      if (hasSeconds) execTimeWithSecondsCount++;
+      else execTimeMissingSecondsCount++;
+    }
+
+    if (idxExec >= 0 && timeRaw) {
+      const parsedEt = tosTradesParseExecTimeRaw(timeRaw);
+      if (parsedEt) {
+        rowCopy[idxExec] = parsedEt;
+      }
+    }
+
+    newOut.push([obj.Account, obj.sourceFile, ...rowCopy, timeRaw]);
+  }
+
+  importIssuesSetMetric(
+    ctx,
+    "TradesExecTimeWithSecondsCount",
+    execTimeWithSecondsCount,
+  );
+  importIssuesSetMetric(
+    ctx,
+    "TradesExecTimeMissingSecondsCount",
+    execTimeMissingSecondsCount,
+  );
+
+  if (execTimeMissingSecondsCount > 0 && execTimeWithSecondsCount === 0) {
+    importIssuesAdd(
+      ctx,
+      "WARN",
+      "tosTradesImportFromFolder",
+      "",
+      "Exec Time",
+      "Seconds missing in Trades CSV",
+      "TOS Trades CSV Exec Time appears to be minute precision (HH:mm). Matching will rely on TosTop seconds + price tie-breakers.",
+    );
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = tosGetOrCreateSheet(ss, tosConfig.tradesCombinedSheetName);
+  const finalOut = tosMergeAccountLabeledCombined(sh, newOut, Account);
+
+  sh.clearContents();
+  tosFormatHeaderColumnAsText(sh, finalOut[0], "Symbol", finalOut.length, 1);
+  tosFormatHeaderColumnAsText(sh, finalOut[0], "Exec Time", finalOut.length, 1);
+  sh.getRange(1, 1, finalOut.length, finalOut[0].length).setValues(finalOut);
+
+  const execCol = finalOut[0].indexOf("Exec Time") + 1;
+  if (execCol > 0 && finalOut.length > 2) {
+    sh.getRange(2, 1, finalOut.length - 1, finalOut[0].length).sort({
+      column: execCol,
+      ascending: true,
+    });
+  }
+
+  ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
+  importIssuesFlush(ctx);
+
+  tosUiAlertSafe(
+    "Trades import complete.\n" +
+      "Account: " +
+      (Account || "") +
+      "\n" +
+      "FolderPropKey: " +
+      folderIdPropKey +
+      "\n" +
+      "FolderName: " +
+      folderName +
+      "\n" +
+      "Files: " +
+      fileCount +
+      "\n" +
+      "Rows written (excl header): " +
+      (finalOut.length - 1),
+  );
+}
+
+/**
+ * DATE/TIME normalize + ET→CT for one already-parsed TosTop file.
+ * Pushes tagged objects onto rowsAll.
+ * Returns parsed.header when the file had rows, otherwise null.
+ */
+function tosTopCollectNormalizedRows(parsed, file, Account, ctx, rowsAll) {
+  if (!parsed || !parsed.rows || !parsed.rows.length) return null;
+
+  importIssuesSetMetric(
+    ctx,
+    "ParsedRowsTotal",
+    Number(ctx.metrics.ParsedRowsTotal || 0) + parsed.rows.length,
+  );
+
+  const idxDate = parsed.header.indexOf("DATE");
+  const idxTime = parsed.header.indexOf("TIME");
+  if (idxDate < 0 || idxTime < 0)
+    throw new Error("TosTop: DATE/TIME headers not found.");
+
+  for (const r of parsed.rows) {
+    const dateRaw = r[idxDate];
+    const dateStr = tosTopNormalizeDateToIso(dateRaw);
+    const timeRaw = String(r[idxTime] ?? "").trim();
+    const timeHHmmssEt = tosTopNormalizeTimeToHHmmss(timeRaw);
+    const timeHHmmss = tosEtToCtHHmmss(timeHHmmssEt, dateStr ?? "");
+    r[idxTime] = timeHHmmss;
+
+    if (timeRaw && !timeHHmmss) {
+      importIssuesAdd(
+        ctx,
+        "BADTIME",
+        file.getName(),
+        "",
+        "TIME",
+        timeRaw,
+        "Could not normalize TIME to HHmmss",
+      );
+    }
+
+    const dt = tosTopParseDateTimeMinute(dateStr, timeHHmmss);
+    ctx.metrics.CombinedRowsTotal++;
+
+    rowsAll.push({
+      Account: Account || "",
+      sourceFile: file.getName(),
+      row: r,
+      dt: dt,
+      timeRaw: timeRaw,
+    });
+  }
+
+  return parsed.header;
+}
+
+/**
+ * Dedupe, sort, merge, and write "TOS Top - Combined"
+ * from already-normalized tagged rows.
+ *
+ * rowsAll items: { Account, sourceFile, row, dt, timeRaw }
+ */
+function tosTopWriteCombinedFromParsed(
+  ctx,
+  Account,
+  folderIdPropKey,
+  folderName,
+  fileCount,
+  rowsAll,
+  canonicalHeader,
+) {
+  if (!canonicalHeader) {
+    importIssuesAdd(
+      ctx,
+      "ERROR",
+      "",
+      "",
+      "Header",
+      "",
+      "Could not find TosTop header row in any CSV.",
+    );
+    importIssuesFlush(ctx);
+    tosUiAlertSafe(
+      "Could not find the TosTop (Cash Balance) header row in any CSV.",
+    );
+    return;
+  }
+
+  const bucketsByKey = {};
+
+  for (const obj of rowsAll) {
+    const r = obj.row;
+
+    const accountKey = String(obj.Account || "");
+    const rowKey = r.join("\u0001");
+    const key = accountKey + "\u0001" + rowKey;
+
+    if (!bucketsByKey[key]) {
+      bucketsByKey[key] = {
+        rowTemplate: r.slice(),
+        dt: obj.dt || null,
+        countsByFile: {},
+        timeRawByFile: {},
+        Account: accountKey,
+      };
+    }
+
+    const f = obj.sourceFile || "";
+    bucketsByKey[key].countsByFile[f] =
+      (bucketsByKey[key].countsByFile[f] || 0) + 1;
+
+    if (bucketsByKey[key].timeRawByFile[f] === undefined) {
+      bucketsByKey[key].timeRawByFile[f] = obj.timeRaw ?? "";
+    }
+  }
+
+  const deduped = [];
+  const keys = Object.keys(bucketsByKey);
+  ctx.metrics.UniqueKeys = keys.length;
+
+  for (let k = 0; k < keys.length; k++) {
+    const key = keys[k];
+    const bucket = bucketsByKey[key];
+
+    let bestFile = "";
+    let bestCount = 0;
+
+    const fileNames = Object.keys(bucket.countsByFile);
+    for (let i = 0; i < fileNames.length; i++) {
+      const f = fileNames[i];
+      const c = bucket.countsByFile[f] || 0;
+
+      if (c > bestCount) {
+        bestCount = c;
+        bestFile = f;
+      } else if (c === bestCount && f < bestFile) {
+        bestFile = f;
+      }
+    }
+
+    const bestTimeRaw =
+      bucket.timeRawByFile && bucket.timeRawByFile[bestFile] !== undefined
+        ? bucket.timeRawByFile[bestFile]
+        : "";
+
+    for (let n = 0; n < bestCount; n++) {
+      deduped.push({
+        Account: bucket.Account,
+        sourceFile: bestFile,
+        row: bucket.rowTemplate.slice(),
+        dt: bucket.dt,
+        timeRaw: bestTimeRaw,
+      });
+    }
+  }
+
+  ctx.metrics.DedupedRows = deduped.length;
+
+  deduped.sort((a, b) => {
+    const da = a.dt,
+      db = b.dt;
+
+    if (da && db) return da - db;
+    if (da && !db) return -1;
+    if (!da && db) return 1;
+
+    const al = (a.Account || "").localeCompare(b.Account || "");
+    if (al !== 0) return al;
+
+    return a.row.join("|").localeCompare(b.row.join("|"));
+  });
+
+  const newOut = [];
+  newOut.push(["Account", "SourceFile", ...canonicalHeader, "TimeRaw"]);
+
+  for (const obj of deduped) {
+    newOut.push([obj.Account, obj.sourceFile, ...obj.row, obj.timeRaw ?? ""]);
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = tosGetOrCreateSheet(ss, tosConfig.topCombinedSheetName);
+  const finalOut = tosMergeAccountLabeledCombined(sh, newOut, Account);
+
+  const fiDateCol = finalOut[0].indexOf("DATE");
+  const fiTimeCol = finalOut[0].indexOf("TIME");
+  const fiTimeRawCol = finalOut[0].indexOf("TimeRaw");
+
+  if (fiDateCol >= 0 && fiTimeCol >= 0 && fiTimeRawCol >= 0) {
+    for (let i = 1; i < finalOut.length; i++) {
+      const row = finalOut[i];
+      const timeRawVal = row[fiTimeRawCol];
+      const dateIso = tosTopNormalizeDateToIso(row[fiDateCol]);
+      let timeRawStr;
+      if (timeRawVal instanceof Date && !isNaN(timeRawVal.getTime())) {
+        const h = String(timeRawVal.getHours()).padStart(2, "0");
+        const m = String(timeRawVal.getMinutes()).padStart(2, "0");
+        const s = String(timeRawVal.getSeconds()).padStart(2, "0");
+        timeRawStr = h + m + s;
+      } else {
+        timeRawStr = tosTopNormalizeTimeToHHmmss(
+          String(timeRawVal ?? "").trim(),
+        );
+      }
+      const timeCorrected = tosEtToCtHHmmss(timeRawStr, dateIso ?? "");
+      if (timeCorrected) row[fiTimeCol] = timeCorrected;
+    }
+  }
+
+  if (finalOut.length > 2) {
+    const dataRows = finalOut.slice(1);
+    dataRows.sort((a, b) => {
+      const dateA = tosTopNormalizeDateToIso(a[fiDateCol]) || "";
+      const dateB = tosTopNormalizeDateToIso(b[fiDateCol]) || "";
+      if (dateA < dateB) return -1;
+      if (dateA > dateB) return 1;
+      const timeA = String(a[fiTimeCol] ?? "");
+      const timeB = String(b[fiTimeCol] ?? "");
+      if (timeA < timeB) return -1;
+      if (timeA > timeB) return 1;
+      return 0;
+    });
+    finalOut.splice(1, finalOut.length - 1, ...dataRows);
+  }
+
+  sh.clearContents();
+  tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME"], finalOut.length, 1);
+  tosFormatHeaderColumnsAsText(
+    sh,
+    finalOut[0],
+    ["TimeRaw"],
+    finalOut.length,
+    1,
+  );
+  sh.getRange(1, 1, finalOut.length, finalOut[0].length).setValues(finalOut);
+  tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME"], finalOut.length, 1);
+  tosFormatHeaderColumnsAsText(
+    sh,
+    finalOut[0],
+    ["TimeRaw"],
+    finalOut.length,
+    1,
+  );
+
+  ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
+  importIssuesFlush(ctx);
+
+  tosUiAlertSafe(
+    "Top import complete.\n" +
+      "Account: " +
+      (Account || "") +
+      "\n" +
+      "FolderPropKey: " +
+      folderIdPropKey +
+      "\n" +
+      "FolderName: " +
+      folderName +
+      "\n" +
+      "Files: " +
+      fileCount +
+      "\n" +
+      "Rows written (excl header): " +
+      (finalOut.length - 1),
+  );
 }
 
 /** ======================================================================
@@ -495,8 +1170,6 @@ function tosTradesImportFromFolder(folderIdPropKey, Account) {
   const ctx = importIssuesStart("tosTradesImportFromFolder");
   importIssuesSetMetric(ctx, "Account", Account || "");
   importIssuesSetMetric(ctx, "OutputSheet", tosConfig.tradesCombinedSheetName);
-
-  // NEW: prove which property key the caller asked us to use
   importIssuesSetMetric(ctx, "FolderIdPropKey", folderIdPropKey || "");
 
   try {
@@ -515,22 +1188,20 @@ function tosTradesImportFromFolder(folderIdPropKey, Account) {
         "\nFolderIdUsed: " +
         folderId +
         "\nFolderNameUsed: " +
-        folderName
+        folderName,
     );
 
     const csvFiles = tosListCsvFilesInFolder(folder, ctx);
     if (!csvFiles) return;
 
-    // NEW: record the first file name as a quick sanity check (optional but very useful)
     importIssuesSetMetric(
       ctx,
       "FirstCsvFile",
       csvFiles[0] && csvFiles[0].getName() ? csvFiles[0].getName() : "",
     );
 
-    // Read + combine rows from all files
-    let allRows = []; // { Account, sourceFile, row }
-    let canonicalHeader = null; // the first header we find becomes the output header
+    let allRows = [];
+    let canonicalHeader = null;
 
     for (let i = 0; i < csvFiles.length; i++) {
       const file = csvFiles[i];
@@ -555,275 +1226,14 @@ function tosTradesImportFromFolder(folderIdPropKey, Account) {
       });
     }
 
-    if (!canonicalHeader) {
-      importIssuesAdd(
-        ctx,
-        "ERROR",
-        "",
-        "",
-        "Header",
-        "",
-        'Could not find "Exec Time" + "Spread" header row in any CSV.',
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe(
-        'Could not find the "Exec Time / Spread / ..." header row in any CSV.',
-      );
-      return;
-    }
-
-    // Fill-down Exec Time + Spread within each file (never carry to next file)
-    const idxExec = canonicalHeader.indexOf("Exec Time");
-    const idxSpread = canonicalHeader.indexOf("Spread");
-    if (idxExec < 0 || idxSpread < 0) {
-      throw new Error("Trades header missing Exec Time or Spread.");
-    }
-
-    let lastExec = "";
-    let lastSpread = "";
-    let lastFile = "";
-
-    for (let i = 0; i < allRows.length; i++) {
-      const obj = allRows[i];
-      const r = obj.row;
-
-      if (obj.sourceFile !== lastFile) {
-        lastFile = obj.sourceFile;
-        lastExec = "";
-        lastSpread = "";
-      }
-
-      if (tosTradesIsRowBlank(r)) {
-        ctx.metrics.BlankRowsSkipped++;
-        ctx.metrics.TotalRowsSkipped++;
-        continue;
-      }
-
-      const execVal = String(r[idxExec] ?? "").trim();
-      const spreadVal = String(r[idxSpread] ?? "").trim();
-
-      if (execVal) lastExec = execVal;
-      else r[idxExec] = lastExec;
-
-      if (spreadVal) lastSpread = spreadVal;
-      else r[idxSpread] = lastSpread;
-    }
-
-    // Dedupe: overlap-safe but preserves legitimate duplicates within a single file.
-    //
-    // IMPORTANT: The key includes Account so LT/DT identical trades never collapse each other.
-    const bucketsByKey = {}; // key -> { rowTemplate, countsByFile: { [fileName]: n }, Account }
-
-    for (let i = 0; i < allRows.length; i++) {
-      const obj = allRows[i];
-      const r = obj.row;
-
-      if (tosTradesIsRowBlank(r)) continue;
-
-      const accountKey = String(obj.Account || "");
-      const rowKey = r.join("\u0001");
-      const key = accountKey + "\u0001" + rowKey;
-
-      if (!bucketsByKey[key]) {
-        bucketsByKey[key] = {
-          rowTemplate: r.slice(),
-          countsByFile: {},
-          Account: accountKey,
-        };
-      }
-
-      const f = obj.sourceFile || "";
-      bucketsByKey[key].countsByFile[f] =
-        (bucketsByKey[key].countsByFile[f] || 0) + 1;
-    }
-
-    const deduped = []; // { Account, sourceFile, row }
-
-    const keys = Object.keys(bucketsByKey);
-    ctx.metrics.CombinedRowsTotal = allRows.length;
-    ctx.metrics.UniqueKeys = keys.length;
-
-    for (let k = 0; k < keys.length; k++) {
-      const key = keys[k];
-      const bucket = bucketsByKey[key];
-
-      // Pick the file that had the most occurrences of this exact row
-      let bestFile = "";
-      let bestCount = 0;
-
-      const fileNames = Object.keys(bucket.countsByFile);
-      for (let i = 0; i < fileNames.length; i++) {
-        const f = fileNames[i];
-        const c = bucket.countsByFile[f] || 0;
-
-        if (c > bestCount) {
-          bestCount = c;
-          bestFile = f;
-        } else if (c === bestCount && f < bestFile) {
-          bestFile = f;
-        }
-      }
-
-      // Emit the row bestCount times to preserve legitimate duplicates
-      for (let n = 0; n < bestCount; n++) {
-        deduped.push({
-          Account: bucket.Account,
-          sourceFile: bestFile,
-          row: bucket.rowTemplate.slice(),
-        });
-      }
-    }
-
-    ctx.metrics.DedupedRows = deduped.length;
-
-    // Sort by Exec Time (oldest -> newest)
-    deduped.sort((a, b) => {
-      const da = tosTradesParseExecTime(a.row[idxExec]);
-      const db = tosTradesParseExecTime(b.row[idxExec]);
-
-      if (da && db) return da - db;
-      if (da && !db) return -1;
-      if (!da && db) return 1;
-
-      // Tie-breaker: Account, filename, row content
-      const al = (a.Account || "").localeCompare(b.Account || "");
-      if (al !== 0) return al;
-
-      const fa = a.sourceFile || "";
-      const fb = b.sourceFile || "";
-      if (fa !== fb) return fa.localeCompare(fb);
-
-      return a.row.join("|").localeCompare(b.row.join("|"));
-    });
-
-    // -----------------------------
-    // Build output rows:
-    //   Account | SourceFile | (canonicalHeader...) | TimeRaw
-    //
-    // NEW: TimeRaw lets you see the exact Exec Time text as it appeared in the CSV row.
-    // This makes it MUCH easier to debug "same-minute" collisions and ordering.
-    // -----------------------------
-    const newOut = [];
-
-    const outHeader = ["Account", "SourceFile", ...canonicalHeader, "TimeRaw"];
-    newOut.push(outHeader);
-
-    // Exec Time index comes from earlier canonicalHeader lookup (idxExec defined above).
-
-    // NEW metric: how many parsed rows have Exec Time with no seconds.
-    // This will typically be "all rows" for current TOS Trades exports (they only show HH:mm),
-    // but keeping the metric helps prevent future confusion.
-    let execTimeMissingSecondsCount = 0;
-    let execTimeWithSecondsCount = 0;
-
-    for (let i = 0; i < deduped.length; i++) {
-      const obj = deduped[i];
-
-      // Defensive: keep Symbol as string so CUSIP-like values don't get coerced.
-      const rowCopy = obj.row.slice();
-      const idxSymbolInCanonical = canonicalHeader.indexOf("Symbol");
-      if (idxSymbolInCanonical >= 0)
-        rowCopy[idxSymbolInCanonical] = String(
-          rowCopy[idxSymbolInCanonical] ?? "",
-        ).trim();
-
-      const timeRaw = idxExec >= 0 ? String(rowCopy[idxExec] ?? "").trim() : "";
-
-      const hasSeconds = /\d{2}[AP]?M?$/i.test(timeRaw);
-      if (timeRaw) {
-        if (hasSeconds) execTimeWithSecondsCount++;
-        else execTimeMissingSecondsCount++;
-      }
-
-      // ET→CT: parse the raw CSV string, apply +1hr, store as "yyyy-MM-dd HH:mm:ss" text.
-      // Storing as text prevents Google Sheets from re-shifting the value with its own timezone.
-      if (idxExec >= 0 && timeRaw) {
-        const parsedEt = tosTradesParseExecTimeRaw(timeRaw); // see new helper below
-        if (parsedEt) {
-          rowCopy[idxExec] = parsedEt; // now a "yyyy-MM-dd HH:mm:ss" string
-        }
-      }
-
-      newOut.push([obj.Account, obj.sourceFile, ...rowCopy, timeRaw]);
-    }
-
-    // Write metrics so Import Issues tells us whether we can trust seconds from Trades.
-    importIssuesSetMetric(
+    tosTradesWriteCombinedFromParsed(
       ctx,
-      "TradesExecTimeWithSecondsCount",
-      execTimeWithSecondsCount,
-    );
-    importIssuesSetMetric(
-      ctx,
-      "TradesExecTimeMissingSecondsCount",
-      execTimeMissingSecondsCount,
-    );
-
-    // Optional: log one WARN if seconds are missing (helps prevent downstream confusion).
-    if (execTimeMissingSecondsCount > 0 && execTimeWithSecondsCount === 0) {
-      importIssuesAdd(
-        ctx,
-        "WARN",
-        "tosTradesImportFromFolder",
-        "",
-        "Exec Time",
-        "Seconds missing in Trades CSV",
-        "TOS Trades CSV Exec Time appears to be minute precision (HH:mm). Matching will rely on TosTop seconds + price tie-breakers.",
-      );
-    }
-
-    // Write into Combined sheet. If combinedReplaceOnlyThatAccount==true, we preserve the other accounts already in the sheet.
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sh = tosGetOrCreateSheet(ss, tosConfig.tradesCombinedSheetName);
-
-    // Keep the other account's rows, replace only this account.
-    const finalOut = tosMergeAccountLabeledCombined(sh, newOut, Account);
-
-    // Clear prior contents BEFORE applying text formats + writing values.
-    sh.clearContents();
-
-    // CRITICAL preserve leading zeros CUSIP-like Symbols by forcing Symbol to text BEFORE setValues.
-    tosFormatHeaderColumnAsText(sh, finalOut[0], "Symbol", finalOut.length, 1);
-    // CRITICAL store Exec Time as plain text so Sheets cannot coerce it to a Date serial.
-    // Without this, getValues() on a downstream read returns a shifted Date instead of the string.
-    tosFormatHeaderColumnAsText(
-      sh,
-      finalOut[0],
-      "Exec Time",
-      finalOut.length,
-      1,
-    );
-    // Now write the sheet.
-    sh.getRange(1, 1, finalOut.length, finalOut[0].length).setValues(finalOut);
-
-    // Safety sort by Exec Time in-sheet (works as text too, but best if consistent)
-    const execCol = finalOut[0].indexOf("Exec Time") + 1;
-    if (execCol > 0 && finalOut.length > 2) {
-      sh.getRange(2, 1, finalOut.length - 1, finalOut[0].length).sort({
-        column: execCol,
-        ascending: true,
-      });
-    }
-
-    ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
-    importIssuesFlush(ctx);
-
-    tosUiAlertSafe(
-      "Trades import complete.\n" +
-        "Account: " +
-        (Account || "") +
-        "\n" +
-        "FolderPropKey: " +
-        folderIdPropKey +
-        "\n" +
-        "FolderName: " +
-        folderName +
-        "\n" +
-        "Files: " +
-        csvFiles.length +
-        "\n" +
-        "Rows written (excl header): " +
-        (finalOut.length - 1),
+      Account,
+      folderIdPropKey,
+      folderName,
+      csvFiles.length,
+      allRows,
+      canonicalHeader,
     );
   } catch (err) {
     importIssuesAdd(
@@ -911,9 +1321,9 @@ function tosTradesParseRows(grid, ctx) {
   let startCol = -1;
 
   for (let r = 0; r < grid.length; r++) {
-    const row = grid[r].map(v => (v == null ? '' : String(v).trim()));
-    const execIdx = row.indexOf('Exec Time');
-    const spreadIdx = row.indexOf('Spread');
+    const row = grid[r].map((v) => (v == null ? "" : String(v).trim()));
+    const execIdx = row.indexOf("Exec Time");
+    const spreadIdx = row.indexOf("Spread");
 
     if (execIdx !== -1 && spreadIdx !== -1) {
       headerRowIdx = r;
@@ -924,23 +1334,25 @@ function tosTradesParseRows(grid, ctx) {
 
   if (headerRowIdx < 0) return null;
 
-  const fullHeader = grid[headerRowIdx].map(v => (v == null ? '' : String(v).trim()));
+  const fullHeader = grid[headerRowIdx].map((v) =>
+    v == null ? "" : String(v).trim(),
+  );
   const header = fullHeader.slice(startCol);
 
-  const idxSide = header.indexOf('Side');
-  const idxSymbol = header.indexOf('Symbol');
-  const idxQty = header.indexOf('Qty');
-  const idxPrice = header.indexOf('Price');
+  const idxSide = header.indexOf("Side");
+  const idxSymbol = header.indexOf("Symbol");
+  const idxQty = header.indexOf("Qty");
+  const idxPrice = header.indexOf("Price");
 
   const rows = [];
   let sawBlank = false;
 
   function isBlankRawRow(raw) {
-    return raw.every(v => String(v ?? '').trim() === '');
+    return raw.every((v) => String(v ?? "").trim() === "");
   }
 
   for (let r = headerRowIdx + 1; r < grid.length; r++) {
-    const raw = grid[r].map(v => (v == null ? '' : String(v).trim()));
+    const raw = grid[r].map((v) => (v == null ? "" : String(v).trim()));
 
     // Track blank rows (before slicing)
     if (isBlankRawRow(raw)) {
@@ -948,13 +1360,15 @@ function tosTradesParseRows(grid, ctx) {
       continue;
     }
 
-    const colA = String(raw[0] || '').trim().toUpperCase();
+    const colA = String(raw[0] || "")
+      .trim()
+      .toUpperCase();
 
     // Stop rule: blank row followed by "EQUITIES" in column A
-    if (sawBlank && colA === 'EQUITIES') break;
+    if (sawBlank && colA === "EQUITIES") break;
 
     // Hard stops for other sections that appear after the trade table
-    if (colA === 'OPTIONS' || colA === 'PROFITS AND LOSSES') break;
+    if (colA === "OPTIONS" || colA === "PROFITS AND LOSSES") break;
 
     sawBlank = false;
 
@@ -962,23 +1376,33 @@ function tosTradesParseRows(grid, ctx) {
     let row = raw.slice(startCol);
 
     // Skip repeated header rows mid-file
-    if (String(row[0] || '').trim().toUpperCase() === 'EXEC TIME') continue;
+    if (
+      String(row[0] || "")
+        .trim()
+        .toUpperCase() === "EXEC TIME"
+    )
+      continue;
 
     if (tosTradesIsRowBlank(row)) continue;
 
     // Normalize length
-    while (row.length < header.length) row.push('');
+    while (row.length < header.length) row.push("");
     if (row.length > header.length) row.length = header.length;
 
     // Keep only trade-ish rows (BUY/SELL + symbol present)
-    const side = idxSide >= 0 ? String(row[idxSide] || '').trim().toUpperCase() : '';
-    const symbol = idxSymbol >= 0 ? String(row[idxSymbol] || '').trim() : '';
+    const side =
+      idxSide >= 0
+        ? String(row[idxSide] || "")
+            .trim()
+            .toUpperCase()
+        : "";
+    const symbol = idxSymbol >= 0 ? String(row[idxSymbol] || "").trim() : "";
 
     if (!/^(BUY|SELL)$/.test(side)) continue;
     if (!symbol) continue;
 
     // Exec Time validation only if populated (legs may be blank)
-    const execStr = String(row[0] || '').trim();
+    const execStr = String(row[0] || "").trim();
     if (execStr) {
       const dt = tosTradesParseExecTime(execStr);
       if (!dt || isNaN(dt.getTime()) || dt.getFullYear() < 2000) continue;
@@ -986,9 +1410,9 @@ function tosTradesParseRows(grid, ctx) {
 
     // Qty validation only if populated
     if (idxQty >= 0) {
-      const qtyStr = String(row[idxQty] || '').trim();
+      const qtyStr = String(row[idxQty] || "").trim();
       if (qtyStr) {
-        const q = Number(qtyStr.replace(/[$,]/g, ''));
+        const q = Number(qtyStr.replace(/[$,]/g, ""));
         if (!isFinite(q) || q === 0) continue;
       }
     }
@@ -1127,12 +1551,10 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
   const ctx = importIssuesStart("tosTopImportFromFolder");
   importIssuesSetMetric(ctx, "Account", Account || "");
   importIssuesSetMetric(ctx, "OutputSheet", tosConfig.topCombinedSheetName);
-
-  // NEW: prove which ScriptProperties key the caller asked us to use
   importIssuesSetMetric(ctx, "FolderIdPropKey", folderIdPropKey || "");
 
   try {
-      const resolved = tosResolveAccountCsvFolder(folderIdPropKey, Account, ctx);
+    const resolved = tosResolveAccountCsvFolder(folderIdPropKey, Account, ctx);
     if (!resolved) return;
 
     const folder = resolved.folder;
@@ -1151,276 +1573,35 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
         folderId +
         "\n" +
         "FolderNameUsed: " +
-        folderName
+        folderName,
     );
 
-       const csvFiles = tosListCsvFilesInFolder(folder, ctx);
+    const csvFiles = tosListCsvFilesInFolder(folder, ctx);
     if (!csvFiles) return;
 
     let canonicalHeader = null;
-
-    // rowsAll holds fully-normalized row signatures for dedupe
-    const rowsAll = []; // { Account, sourceFile, row, dt, timeRaw }
+    const rowsAll = [];
 
     for (const file of csvFiles) {
       const parsed = tosTopParseOneCsvFile(file);
-      if (!parsed || !parsed.rows || !parsed.rows.length) continue;
-
-      importIssuesSetMetric(
+      const headerFromFile = tosTopCollectNormalizedRows(
+        parsed,
+        file,
+        Account,
         ctx,
-        "ParsedRowsTotal",
-        Number(ctx.metrics.ParsedRowsTotal || 0) + parsed.rows.length,
+        rowsAll,
       );
-
-      if (!canonicalHeader) canonicalHeader = parsed.header;
-
-      const idxDate = parsed.header.indexOf("DATE");
-      const idxTime = parsed.header.indexOf("TIME");
-      if (idxDate < 0 || idxTime < 0)
-        throw new Error("TosTop: DATE/TIME headers not found.");
-
-      for (const r of parsed.rows) {
-        // REPLACE WITH:
-        const dateRaw = r[idxDate]; // preserve original — may be Date object OR string from CSV
-        const dateStr = tosTopNormalizeDateToIso(dateRaw); // always produces yyyy-MM-dd regardless of input type
-        const timeRaw = String(r[idxTime] ?? "").trim(); // may include seconds
-        // NEW: TIME in the Combined sheet is stored as HHmmss text (second precision).
-        // Apply ET→CT 1 hour correction using the trade date as context.
-        const timeHHmmssEt = tosTopNormalizeTimeToHHmmss(timeRaw);
-        const timeHHmmss = tosEtToCtHHmmss(timeHHmmssEt, dateStr ?? "");
-        r[idxTime] = timeHHmmss;
-
-        if (timeRaw && !timeHHmmss) {
-          importIssuesAdd(
-            ctx,
-            "BADTIME",
-            file.getName(),
-            "",
-            "TIME",
-            timeRaw,
-            "Could not normalize TIME to HHmmss",
-          );
-        }
-
-        // NEW: dt is now second-precision (used only for sorting/dedupe inside Combined building).
-        const dt = tosTopParseDateTimeMinute(dateStr, timeHHmmss);
-
-        ctx.metrics.CombinedRowsTotal++;
-
-        rowsAll.push({
-          Account: Account || "",
-          sourceFile: file.getName(),
-          row: r,
-          dt: dt,
-          timeRaw: timeRaw,
-        });
-      }
+      if (headerFromFile && !canonicalHeader) canonicalHeader = headerFromFile;
     }
 
-    if (!canonicalHeader) {
-      importIssuesAdd(
-        ctx,
-        "ERROR",
-        "",
-        "",
-        "Header",
-        "",
-        "Could not find TosTop header row in any CSV.",
-      );
-      importIssuesFlush(ctx);
-      tosUiAlertSafe(
-        "Could not find the TosTop (Cash Balance) header row in any CSV.",
-      );
-      return;
-    }
-
-    // Dedupe overlap-safe, preserving legitimate duplicates
-    // IMPORTANT: key includes Account so LT/DT don’t collapse each other.
-    const bucketsByKey = {}; // key -> { rowTemplate, dt, countsByFile, timeRawByFile, Account }
-
-    for (const obj of rowsAll) {
-      const r = obj.row;
-
-      const accountKey = String(obj.Account || "");
-      const rowKey = r.join("\u0001");
-      const key = accountKey + "\u0001" + rowKey;
-
-      if (!bucketsByKey[key]) {
-        bucketsByKey[key] = {
-          rowTemplate: r.slice(),
-          dt: obj.dt || null,
-          countsByFile: {},
-          timeRawByFile: {},
-          Account: accountKey,
-        };
-      }
-
-      const f = obj.sourceFile || "";
-      bucketsByKey[key].countsByFile[f] =
-        (bucketsByKey[key].countsByFile[f] || 0) + 1;
-
-      // Keep the first raw time we saw for this key in this file (good for tracing)
-      if (bucketsByKey[key].timeRawByFile[f] === undefined) {
-        bucketsByKey[key].timeRawByFile[f] = obj.timeRaw ?? "";
-      }
-    }
-
-    const deduped = []; // { Account, sourceFile, row, dt, timeRaw }
-    const keys = Object.keys(bucketsByKey);
-    ctx.metrics.UniqueKeys = keys.length;
-
-    for (let k = 0; k < keys.length; k++) {
-      const key = keys[k];
-      const bucket = bucketsByKey[key];
-
-      // Pick the file that had the most occurrences of this exact row
-      let bestFile = "";
-      let bestCount = 0;
-
-      const fileNames = Object.keys(bucket.countsByFile);
-      for (let i = 0; i < fileNames.length; i++) {
-        const f = fileNames[i];
-        const c = bucket.countsByFile[f] || 0;
-
-        if (c > bestCount) {
-          bestCount = c;
-          bestFile = f;
-        } else if (c === bestCount && f < bestFile) {
-          bestFile = f;
-        }
-      }
-
-      const bestTimeRaw =
-        bucket.timeRawByFile && bucket.timeRawByFile[bestFile] !== undefined
-          ? bucket.timeRawByFile[bestFile]
-          : "";
-
-      // Emit the row bestCount times to preserve legitimate duplicates
-      for (let n = 0; n < bestCount; n++) {
-        deduped.push({
-          Account: bucket.Account,
-          sourceFile: bestFile,
-          row: bucket.rowTemplate.slice(),
-          dt: bucket.dt,
-          timeRaw: bestTimeRaw,
-        });
-      }
-    }
-
-    ctx.metrics.DedupedRows = deduped.length;
-
-    // Sort oldest -> newest
-    deduped.sort((a, b) => {
-      const da = a.dt,
-        db = b.dt;
-
-      if (da && db) return da - db;
-      if (da && !db) return -1;
-      if (!da && db) return 1;
-
-      // Tie-breaker: Account then row content
-      const al = (a.Account || "").localeCompare(b.Account || "");
-      if (al !== 0) return al;
-
-      return a.row.join("|").localeCompare(b.row.join("|"));
-    });
-
-    // Output: Account + SourceFile + canonicalHeader + TimeRaw
-    const newOut = [];
-    newOut.push(["Account", "SourceFile", ...canonicalHeader, "TimeRaw"]);
-
-    for (const obj of deduped) {
-      newOut.push([obj.Account, obj.sourceFile, ...obj.row, obj.timeRaw ?? ""]);
-    }
-
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sh = tosGetOrCreateSheet(ss, tosConfig.topCombinedSheetName);
-
-    // REPLACE WITH:
-    const finalOut = tosMergeAccountLabeledCombined(sh, newOut, Account);
-
-    // Post-merge: re-derive TIME from TimeRaw for every row.
-    // Ensures kept rows (other account) are always CT-corrected from their original ET value.
-    const fiDateCol = finalOut[0].indexOf("DATE");
-    const fiTimeCol = finalOut[0].indexOf("TIME");
-    const fiTimeRawCol = finalOut[0].indexOf("TimeRaw");
-
-    if (fiDateCol >= 0 && fiTimeCol >= 0 && fiTimeRawCol >= 0) {
-      for (let i = 1; i < finalOut.length; i++) {
-        const row = finalOut[i];
-        const timeRawVal = row[fiTimeRawCol];
-        const dateIso = tosTopNormalizeDateToIso(row[fiDateCol]);
-        let timeRawStr;
-        if (timeRawVal instanceof Date && !isNaN(timeRawVal.getTime())) {
-          const h = String(timeRawVal.getHours()).padStart(2, "0");
-          const m = String(timeRawVal.getMinutes()).padStart(2, "0");
-          const s = String(timeRawVal.getSeconds()).padStart(2, "0");
-          timeRawStr = h + m + s;
-        } else {
-          timeRawStr = tosTopNormalizeTimeToHHmmss(
-            String(timeRawVal ?? "").trim(),
-          );
-        }
-        const timeCorrected = tosEtToCtHHmmss(timeRawStr, dateIso ?? "");
-        if (timeCorrected) row[fiTimeCol] = timeCorrected;
-      }
-    }
-
-    // In-memory sort by DATE then TIME — must happen BEFORE setValues.
-    if (finalOut.length > 2) {
-      const dataRows = finalOut.slice(1);
-      dataRows.sort((a, b) => {
-        const dateA = tosTopNormalizeDateToIso(a[fiDateCol]) || "";
-        const dateB = tosTopNormalizeDateToIso(b[fiDateCol]) || "";
-        if (dateA < dateB) return -1;
-        if (dateA > dateB) return 1;
-        const timeA = String(a[fiTimeCol] ?? "");
-        const timeB = String(b[fiTimeCol] ?? "");
-        if (timeA < timeB) return -1;
-        if (timeA > timeB) return 1;
-        return 0;
-      });
-      finalOut.splice(1, finalOut.length - 1, ...dataRows);
-    }
-
-    sh.clearContents();
-    tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME"], finalOut.length, 1);
-    tosFormatHeaderColumnsAsText(
-      sh,
-      finalOut[0],
-      ["TimeRaw"],
-      finalOut.length,
-      1,
-    );
-    sh.getRange(1, 1, finalOut.length, finalOut[0].length).setValues(finalOut);
-    tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME"], finalOut.length, 1);
-    tosFormatHeaderColumnsAsText(
-      sh,
-      finalOut[0],
-      ["TimeRaw"],
-      finalOut.length,
-      1,
-    );
-
-    ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
-    importIssuesFlush(ctx);
-
-    tosUiAlertSafe(
-      "Top import complete.\n" +
-        "Account: " +
-        (Account || "") +
-        "\n" +
-        "FolderPropKey: " +
-        folderIdPropKey +
-        "\n" +
-        "FolderName: " +
-        folderName +
-        "\n" +
-        "Files: " +
-        csvFiles.length +
-        "\n" +
-        "Rows written (excl header): " +
-        (finalOut.length - 1),
+    tosTopWriteCombinedFromParsed(
+      ctx,
+      Account,
+      folderIdPropKey,
+      folderName,
+      csvFiles.length,
+      rowsAll,
+      canonicalHeader,
     );
   } catch (err) {
     importIssuesAdd(
@@ -1472,10 +1653,10 @@ function tosTopParseRows(grid) {
   let startCol = -1;
 
   for (let r = 0; r < grid.length; r++) {
-    const row = grid[r].map(v => (v == null ? '' : String(v).trim()));
-    const dateIdx = row.indexOf('DATE');
-    const timeIdx = row.indexOf('TIME');
-    const descIdx = row.indexOf('DESCRIPTION');
+    const row = grid[r].map((v) => (v == null ? "" : String(v).trim()));
+    const dateIdx = row.indexOf("DATE");
+    const timeIdx = row.indexOf("TIME");
+    const descIdx = row.indexOf("DESCRIPTION");
 
     if (dateIdx !== -1 && timeIdx !== -1 && descIdx !== -1) {
       headerRowIdx = r;
@@ -1486,22 +1667,26 @@ function tosTopParseRows(grid) {
 
   if (headerRowIdx < 0) return null;
 
-  const fullHeader = grid[headerRowIdx].map(v => (v == null ? '' : String(v).trim()));
+  const fullHeader = grid[headerRowIdx].map((v) =>
+    v == null ? "" : String(v).trim(),
+  );
   const header = fullHeader.slice(startCol);
 
-  const idxDesc = header.indexOf('DESCRIPTION');
+  const idxDesc = header.indexOf("DESCRIPTION");
   const rows = [];
 
   for (let r = headerRowIdx + 1; r < grid.length; r++) {
-    let row = grid[r].map(v => (v == null ? '' : String(v).trim())).slice(startCol);
+    let row = grid[r]
+      .map((v) => (v == null ? "" : String(v).trim()))
+      .slice(startCol);
 
-    while (row.length < header.length) row.push('');
+    while (row.length < header.length) row.push("");
     if (row.length > header.length) row.length = header.length;
 
     if (tosTradesIsRowBlank(row)) break;
 
-    const desc = (idxDesc >= 0 ? String(row[idxDesc] || '').trim() : '');
-    if (desc.toUpperCase() === 'TOTAL') break;
+    const desc = idxDesc >= 0 ? String(row[idxDesc] || "").trim() : "";
+    if (desc.toUpperCase() === "TOTAL") break;
 
     rows.push(row);
   }
