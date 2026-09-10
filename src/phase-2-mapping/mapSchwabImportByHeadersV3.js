@@ -24,7 +24,7 @@
  * Related files:
  *   - BuildUnifiedImportV3.js          (Phase 1 – produces Schwab Import)
  *   - ImportIssues.js                  (shared logging engine; mappingIssues* wrappers)
- *   - DBTools.js                       (Phase 3 – consumes Schwab Mapping)
+ *   - Phase3Processing.js              (Phase 3 – consumes Schwab Mapping)
  *   - SettingsService.js
  *
  * Current focus: clear high-level documentation before any structural refactoring.
@@ -185,7 +185,6 @@ const SCHWAB_MAPPING_SCOPE_HEADERS = [
 function mapSchwabImportByHeadersV3() {
   const ss = SpreadsheetApp.getActive();
   const tz = ss.getSpreadsheetTimeZone();
-  const ui = SpreadsheetApp.getUi();
 
   // Create a single run context for all metrics + issues.
   // This is the core of the "Import Issues" style approach.
@@ -248,7 +247,7 @@ function mapSchwabImportByHeadersV3() {
       mappingIssuesSetMetric(ctx, "SourceRowsReadExclHeader", 0);
       mappingIssuesSetMetric(ctx, "RowsWrittenExclHeader", 0);
       mappingIssuesFlush(ctx);
-      ui.alert("Schwab Import has no rows to map.");
+      uiAlertSafe("Schwab Import has no rows to map.");
       return;
     }
 
@@ -447,8 +446,7 @@ function mapSchwabImportByHeadersV3() {
       // DRIP no longer needs a special case; those rows already have
       // Side=BUY and Pos Effect=TO OPEN.
       const isTrade =
-        !accountActionTag &&
-        isTradeBySidePosEffect(sideRaw, posEffectRaw);
+        !accountActionTag && isTradeBySidePosEffect(sideRaw, posEffectRaw);
       // =========================
       // Fill "Schwab Mapping" scope columns
       // =========================
@@ -1069,7 +1067,7 @@ function mapSchwabImportByHeadersV3() {
     // Flush issues + metrics at the end of the run
     mappingIssuesFlush(ctx);
 
-    ui.alert(
+    uiAlertSafe(
       "mapSchwabImportByHeadersV3 finished.\n" +
         "RunId: " +
         ctx.runId +
@@ -1385,7 +1383,6 @@ function postProcessWarnMissingNetAmountBySpreadGroupsV3(
 // Core helper functions (mostly unchanged from your prior version)
 // =====================================================
 
-
 /** Checks for duplicate Headers */
 function assertNoDuplicateHeaders(headers, where, ctx) {
   // ctx is optional — pass it from mapSchwabImportByHeadersV3 so a flush
@@ -1516,7 +1513,6 @@ function buildSignedQuantity(sideRaw, qtyAbs) {
   if (!q) return "";
   return side === "SELL" ? -Math.abs(q) : Math.abs(q);
 }
-
 
 /** Extract ticker from Symbol. For options like "MRVL 11/19/2021 70.00 C", ticker = "MRVL". */
 function extractTickerFromSymbol(symbolRaw) {
@@ -2059,7 +2055,6 @@ function applyCashFlowFromMapV3(
 // ============================================================================
 function auditSchwabMappingV3() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
   const ctx = mappingIssuesStart("auditSchwabMappingV3");
 
   const sh = ss.getSheetByName(SHEET_SCHWAB_MAPPING);
@@ -2537,7 +2532,7 @@ function auditSchwabMappingV3() {
   mappingIssuesFlush(ctx);
 
   const icon = auditErrors > 0 ? "🔴" : auditWarns > 0 ? "🟡" : "✅";
-  SpreadsheetApp.getUi().alert(
+  uiAlertSafe(
     icon +
       " Schwab Mapping Audit Complete\n\n" +
       "Rows checked:        " +
