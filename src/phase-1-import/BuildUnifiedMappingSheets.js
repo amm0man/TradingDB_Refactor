@@ -303,6 +303,17 @@ function createMappingSheetHelpers(opts) {
   }
 
   function parseCorpActionStockDescription_(descRaw, cusipMap) {
+    // Recognize share-delivery descriptions so buildUnifiedImportV3 can emit a
+    // synthetic STOCK row (Buy to Open / Sell to Close) via CorpActionStockMap.
+    //
+    // Known phrases:
+    //   MANDATORY - EXCHANGE 375.0 ISENF
+    //   NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION 96.0 50545P309
+    //   STOCK MERGER 31.0 VLGDF
+    //     TOS labels some spin-outs "Stock Merger". Debit-side rows such as
+    //     "Stock Merger -62.0" have no ticker token and return null (no emit).
+    //     Credit-side rows with a negative qty also return null so a removal
+    //     cannot be turned into a Buy to Open.
     const u = String(descRaw ?? "")
       .trim()
       .toUpperCase();
@@ -313,6 +324,8 @@ function createMappingSheetHelpers(opts) {
       phrase = "MANDATORY - EXCHANGE";
     } else if (u.includes("NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION")) {
       phrase = "NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION";
+    } else if (u.includes("STOCK MERGER")) {
+      phrase = "STOCK MERGER";
     } else {
       return null;
     }
@@ -324,6 +337,9 @@ function createMappingSheetHelpers(opts) {
     const rawQty = Number(qtyMatch[1]);
     const parsedQty = Math.abs(rawQty);
     if (!isFinite(parsedQty) || parsedQty <= 0) return null;
+
+    // Debit / removal side of a TOS "Stock Merger -qty" pair is not a delivery.
+    if (phrase === "STOCK MERGER" && rawQty <= 0) return null;
 
     const afterQty = afterPhrase
       .substring(qtyMatch.index + qtyMatch[0].length)

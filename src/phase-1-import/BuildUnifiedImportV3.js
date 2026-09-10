@@ -2328,6 +2328,28 @@ function buildUnifiedImportV3() {
             .trim()
             .toUpperCase();
 
+          // IGNORE / SKIP = matched on purpose, do not invent a position
+          // (1:1 same-ticker recap such as Stock Merger 62.0 SA).
+          if (emitActionU === "IGNORE" || emitActionU === "SKIP") {
+            importIssuesAdd(
+              ctx,
+              "INFO",
+              "TosTop",
+              i + 2,
+              "DESCRIPTION",
+              desc,
+              "CorpActionStockMap Emit Action=" +
+                emitActionU +
+                "; no synthetic STOCK row. " +
+                "Phrase=" +
+                corpActionStockParsed.phrase +
+                "; MatchSymbol=" +
+                corpActionStockParsed.resolvedSymbol +
+                "; Qty=" +
+                corpActionStockParsed.parsedQty +
+                ".",
+            );
+          } else {
           const stockAction = emitActionU === "SELL" ? "Sell" : "Buy";
           const stockSide = emitActionU === "SELL" ? "SELL" : "BUY";
           const stockPosEffect =
@@ -2347,8 +2369,8 @@ function buildUnifiedImportV3() {
             Description: syntheticDesc,
             Spread: "STOCK",
             Quantity: emitQty,
-            Price: "",
-            NetPrice: "",
+            Price: 0,
+            NetPrice: 0,
             Side: stockSide,
             PosEffect: stockPosEffect,
             Exp: "",
@@ -2375,6 +2397,7 @@ function buildUnifiedImportV3() {
               `Source=${corpActionStockMapRow.sourceSymbol}; Emit=${emitSymbol}; Qty=${emitQty}; ` +
               `MatchSymbol=${corpActionStockParsed.resolvedSymbol}.`,
           );
+          }
         } else {
           if (!symbolOut && corpActionStockParsed.resolvedSymbol) {
             symbolOut = corpActionStockParsed.resolvedSymbol;
