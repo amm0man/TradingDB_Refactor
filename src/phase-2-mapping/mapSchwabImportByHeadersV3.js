@@ -434,16 +434,20 @@ function mapSchwabImportByHeadersV3() {
           (corpActionCounts[corpActionTag] || 0) + 1;
 
       // Detect trade rows:
-      // Trades are the rows that should get "Buy/Sell to Open/Close" action labels.
-      // We only treat it as a trade if:
-      // - Side/PosEffect identify it as a trade
-      // - and it wasn't tagged as Account Actions or Corporate Actions
-      // DRIP rows carry a corpActionTag for analytics tagging BUT are real trade rows.
-      // All other corp-tagged rows (dividends, splits, etc.) remain non-trade.
-      const isDripCorpTag = corpActionTag === "DRIP";
+      // Side + Pos Effect is the authority (BUY/SELL and OPEN/CLOSE).
+      // A Corporate Actions tag is a label only — it must not wipe Quantity /
+      // Entry Price on a real trade. That bug hit the Phase 1 synthetic
+      // STOCK MERGER receipt: Description contains "STOCK MERGER", so the
+      // keyword rules tagged it, isTrade went false, and Mapping wrote
+      // Action=Buy with blank qty/price.
+      //
+      // RAD merger / dividend rows stay non-trade because they have blank
+      // Side and Pos Effect, so isTradeBySidePosEffect() returns false.
+      // Account Actions still vetoes (fees, journals, ACH).
+      // DRIP no longer needs a special case; those rows already have
+      // Side=BUY and Pos Effect=TO OPEN.
       const isTrade =
         !accountActionTag &&
-        (!corpActionTag || isDripCorpTag) &&
         isTradeBySidePosEffect(sideRaw, posEffectRaw);
       // =========================
       // Fill "Schwab Mapping" scope columns

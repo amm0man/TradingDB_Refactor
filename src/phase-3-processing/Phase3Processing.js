@@ -33,22 +33,28 @@
 
 function logAction(action, details) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let logSheet = ss.getSheetByName('DB_log');
+  let logSheet = ss.getSheetByName("DB_log");
   if (!logSheet) {
-    logSheet = ss.insertSheet('DB_log');
-    logSheet.appendRow(['Timestamp', 'Action', 'Details']);
+    logSheet = ss.insertSheet("DB_log");
+    logSheet.appendRow(["Timestamp", "Action", "Details"]);
   }
   logSheet.appendRow([
-    Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
+    Utilities.formatDate(
+      new Date(),
+      ss.getSpreadsheetTimeZone(),
+      "yyyy-MM-dd HH:mm:ss",
+    ),
     action,
-    details
+    details,
   ]);
 }
 
 function ensureValidationErrorSheet() {
-  let sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Validation Errors");
+  let sheet =
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Validation Errors");
   if (!sheet) {
-    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Validation Errors");
+    sheet =
+      SpreadsheetApp.getActiveSpreadsheet().insertSheet("Validation Errors");
     sheet.appendRow(["Row", "Column", "Error", "Suggested Fix"]);
   }
   return sheet;
@@ -64,23 +70,26 @@ function refreshAllScripts() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const tz = ss.getSpreadsheetTimeZone();
   const runId = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd HH:mm:ss zzz");
-  setSetting('ACTIVE_IMPORT_RUN_ID', runId);
+  setSetting("ACTIVE_IMPORT_RUN_ID", runId);
 
   try {
-    copyMappingToImportByHeaders();         // Step 1 → Phase3Step1_CopyMapping.js
-    validateAndCleanImportToHelperV3();     // Step 2 → Phase3Step2_ValidateClean.js
-    populateStagingWithBlockLogicV3();      // Step 3 → Phase3BlockLogic.js
+    copyMappingToImportByHeaders(); // Step 1 → Phase3Step1_CopyMapping.js
+    validateAndCleanImportToHelperV3(); // Step 2 → Phase3Step2_ValidateClean.js
+    populateStagingWithBlockLogicV3(); // Step 3 → Phase3BlockLogic.js
 
-    SpreadsheetApp.getUi().alert(
+    uiAlertSafe(
       "✅ Full refresh complete!\n" +
-      "RunId: " + runId + "\n\n" +
-      "Check the 'Staging Issues' sheet and filter by this RunId to review."
+        "RunId: " +
+        runId +
+        "\n\n" +
+        "Check the 'Staging Issues' sheet and filter by this RunId to review.",
     );
   } catch (e) {
-    SpreadsheetApp.getUi().alert("❌ Pipeline error: " + e.message + "\nCheck Staging Issues sheet.");
-    throw e;
+    uiAlertSafe(
+      "❌ Pipeline error: " + e.message + "\nCheck Staging Issues sheet.",
+    );
   } finally {
     // Always clear the active RunId — even if an error occurred
-    setSetting('ACTIVE_IMPORT_RUN_ID', '');
+    setSetting("ACTIVE_IMPORT_RUN_ID", "");
   }
 }

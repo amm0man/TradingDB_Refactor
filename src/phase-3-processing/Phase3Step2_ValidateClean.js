@@ -47,9 +47,9 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
 
   // Try Trade Time Stamp first (primary path — should always be present)
   if (tsVal) {
-    fullTimestamp = (tsVal instanceof Date) ? tsVal : new Date(tsVal);
+    fullTimestamp = tsVal instanceof Date ? tsVal : new Date(tsVal);
     if (isNaN(fullTimestamp.getTime())) {
-      fullTimestamp = new Date(tsVal.toString().replace(/-/g, '/'));
+      fullTimestamp = new Date(tsVal.toString().replace(/-/g, "/"));
     }
   }
 
@@ -57,14 +57,15 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
   // missing or unparseable (fixes DT rows that arrive without a full timestamp)
   if (!fullTimestamp || isNaN(fullTimestamp.getTime())) {
     if (tradeDateVal && tradeTimeVal) {
-      let baseDate = (tradeDateVal instanceof Date) ? tradeDateVal : new Date(tradeDateVal);
+      let baseDate =
+        tradeDateVal instanceof Date ? tradeDateVal : new Date(tradeDateVal);
       if (!isNaN(baseDate.getTime())) {
         const timeStr = tradeTimeVal.toString().trim();
         let hours, minutes, seconds;
 
-        if (timeStr.includes(':')) {
+        if (timeStr.includes(":")) {
           // Format "HH:mm" or "HH:mm:ss"
-          const parts = timeStr.split(':').map(Number);
+          const parts = timeStr.split(":").map(Number);
           [hours, minutes, seconds = 0] = parts;
         } else if (timeStr.length >= 4) {
           // Format "HHmm" or "HHmmss" — no colon (Schwab Mapping output format)
@@ -72,7 +73,9 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
           minutes = Number(timeStr.substring(2, 4));
           seconds = timeStr.length >= 6 ? Number(timeStr.substring(4, 6)) : 0;
         } else {
-          hours = NaN; minutes = NaN; seconds = 0;
+          hours = NaN;
+          minutes = NaN;
+          seconds = 0;
         }
 
         if (!isNaN(hours) && !isNaN(minutes)) {
@@ -82,14 +85,16 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
             baseDate.getDate(),
             hours,
             minutes,
-            seconds || 0
+            seconds || 0,
           );
         }
       }
     }
   }
 
-  return fullTimestamp && !isNaN(fullTimestamp.getTime()) ? fullTimestamp : null;
+  return fullTimestamp && !isNaN(fullTimestamp.getTime())
+    ? fullTimestamp
+    : null;
 }
 
 /**
@@ -116,14 +121,15 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
 // =========================================================================
 function validateAndCleanImportToHelperV3() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const importSheet = ss.getSheetByName('Import');
-  const helperSheet = ss.getSheetByName('Helper');
-  if (!importSheet || !helperSheet) throw new Error('Import or Helper sheet not found!');
+  const importSheet = ss.getSheetByName("Import");
+  const helperSheet = ss.getSheetByName("Helper");
+  if (!importSheet || !helperSheet)
+    throw new Error("Import or Helper sheet not found!");
 
   // ── Staging Issues CTX ─────────────────────────────────────────────────────
-  const ctx = stagingIssuesStart('validateAndCleanImportToHelperV3');
-  importIssuesSetMetric(ctx, 'SourceSheet', 'Import');
-  importIssuesSetMetric(ctx, 'DestSheet', 'Helper');
+  const ctx = stagingIssuesStart("validateAndCleanImportToHelperV3");
+  importIssuesSetMetric(ctx, "SourceSheet", "Import");
+  importIssuesSetMetric(ctx, "DestSheet", "Helper");
   // ───────────────────────────────────────────────────────────────────────────
 
   // ── PRIORITY 1: try/catch/finally so Issues log ALWAYS gets flushed ────────
@@ -132,70 +138,83 @@ function validateAndCleanImportToHelperV3() {
   // Staging Issues for this step — the worst time to have no diagnostics.
   // The finally block guarantees stagingIssuesFlush(ctx) runs even on crash.
   try {
-
     // 1. Read Import data (starts at row 4)
-    const importData = importSheet.getRange(
-      4, 1,
-      importSheet.getLastRow() - 3,
-      importSheet.getLastColumn()
-    ).getValues();
+    const importData = importSheet
+      .getRange(4, 1, importSheet.getLastRow() - 3, importSheet.getLastColumn())
+      .getValues();
 
-    importIssuesSetMetric(ctx, 'SourceRowsReadExclHeader', importData.length);
+    importIssuesSetMetric(ctx, "SourceRowsReadExclHeader", importData.length);
     let tickerNormCount = 0;
 
     // ── Raw importHeaders array (lowercase-trimmed for indexOf matching) ──────
     const importHeaders = importSheet
       .getRange(1, 1, 1, importSheet.getLastColumn())
       .getValues()[0]
-      .map(h => h.trim().toLowerCase());
+      .map((h) => h.trim().toLowerCase());
 
     // ── PRIORITY 2: Hoist ALL header index lookups ABOVE the row loop ─────────
     // WHY: importHeaders never changes between rows. Calling indexOf() inside the
     // loop ran every search on every row (12 searches × 15,000 DT rows = 180,000
     // redundant string comparisons per pipeline run). Hoisted once here = zero
     // redundancy. Also eliminates any risk of a typo on one pass vs another.
-    const tsIdx = importHeaders.indexOf('trade time stamp');
-    const dateIdx = importHeaders.indexOf('trade date');
-    const timeIdx = importHeaders.indexOf('trade time');
-    const tickerIdx = importHeaders.indexOf('ticker');
-    const strategyTypeIdx = importHeaders.indexOf('strategy type');
-    const tradeTypeIdx = importHeaders.indexOf('trade type');
-    const signedQuantityIdx = importHeaders.indexOf('signed quantity');
-    const quantityIdx = importHeaders.indexOf('quantity');
-    const actionIdx = importHeaders.indexOf('action');
-    const entryPriceIdx = importHeaders.indexOf('entry price');
-    const optionContractIdx = importHeaders.indexOf('option contract');
-    const strikeOCIdx = importHeaders.indexOf('option strike');
-    const expOCIdx = importHeaders.indexOf('option expiration');
-    const cpOCIdx = importHeaders.indexOf('call/put');
-    const accountIdx = importHeaders.indexOf('account');
-    const corpActionsIdx = importHeaders.indexOf('corporate actions');
-    const accountActionsIdx = importHeaders.indexOf('account actions');
+    const tsIdx = importHeaders.indexOf("trade time stamp");
+    const dateIdx = importHeaders.indexOf("trade date");
+    const timeIdx = importHeaders.indexOf("trade time");
+    const tickerIdx = importHeaders.indexOf("ticker");
+    const strategyTypeIdx = importHeaders.indexOf("strategy type");
+    const tradeTypeIdx = importHeaders.indexOf("trade type");
+    const signedQuantityIdx = importHeaders.indexOf("signed quantity");
+    const quantityIdx = importHeaders.indexOf("quantity");
+    const actionIdx = importHeaders.indexOf("action");
+    const entryPriceIdx = importHeaders.indexOf("entry price");
+    const optionContractIdx = importHeaders.indexOf("option contract");
+    const strikeOCIdx = importHeaders.indexOf("option strike");
+    const expOCIdx = importHeaders.indexOf("option expiration");
+    const cpOCIdx = importHeaders.indexOf("call/put");
+    const accountIdx = importHeaders.indexOf("account");
+    const corpActionsIdx = importHeaders.indexOf("corporate actions");
+    const accountActionsIdx = importHeaders.indexOf("account actions");
     // ─────────────────────────────────────────────────────────────────────────
 
     // Also need the uppercase-target column indices (used in the forEach below)
     // Hoisted here so the forEach doesn't re-search importHeaders each iteration.
-    const uppercaseTextColumns = ['Account', 'Ticker', 'Action', 'Trade Type', 'Call/Put', 'Strategy Type'];
-    const uppercaseColIndices = uppercaseTextColumns.map(
-      colName => importHeaders.indexOf(colName.toLowerCase())
+    const uppercaseTextColumns = [
+      "Account",
+      "Ticker",
+      "Action",
+      "Trade Type",
+      "Call/Put",
+      "Strategy Type",
+    ];
+    const uppercaseColIndices = uppercaseTextColumns.map((colName) =>
+      importHeaders.indexOf(colName.toLowerCase()),
     );
 
     // 2. Make sure Trade Time Stamp column exists on Helper
-    const helperHeaders = helperSheet.getRange(1, 1, 1, helperSheet.getLastColumn()).getValues()[0];
-    let tsCol = helperHeaders.findIndex(h => h.toString().trim().toLowerCase() === 'trade time stamp') + 1;
+    const helperHeaders = helperSheet
+      .getRange(1, 1, 1, helperSheet.getLastColumn())
+      .getValues()[0];
+    let tsCol =
+      helperHeaders.findIndex(
+        (h) => h.toString().trim().toLowerCase() === "trade time stamp",
+      ) + 1;
     if (tsCol === 0) {
-      helperSheet.getRange(1, helperSheet.getLastColumn() + 1).setValue('Trade Time Stamp');
+      helperSheet
+        .getRange(1, helperSheet.getLastColumn() + 1)
+        .setValue("Trade Time Stamp");
       tsCol = helperSheet.getLastColumn();
     }
 
     let outputRows = [];
     let errors = [];
     const errorSheet = ensureValidationErrorSheet();
-    const nonTradeActions = ['EFN', 'RAD', 'JRN', 'DOI', 'EXP', 'CRC', 'CDB'];
+    const nonTradeActions = ["EFN", "RAD", "JRN", "DOI", "EXP", "CRC", "CDB"];
 
     // === CLEAR OLD ERRORS ===
     if (errorSheet.getLastRow() > 1) {
-      errorSheet.getRange(2, 1, errorSheet.getLastRow() - 1, errorSheet.getLastColumn()).clearContent();
+      errorSheet
+        .getRange(2, 1, errorSheet.getLastRow() - 1, errorSheet.getLastColumn())
+        .clearContent();
     }
 
     // ── TIMEZONE: resolved once here so Utilities.formatDate doesn't need to
@@ -210,15 +229,15 @@ function validateAndCleanImportToHelperV3() {
     for (let r = 0; r < importData.length; r++) {
       const row = importData[r];
       let cleanRow = [...row];
-      let errorMsg = '';
+      let errorMsg = "";
 
       // ── 1. TIMESTAMP: derive from authoritative Trade Time Stamp (with fallback) ──
       // Uses the hoisted tsIdx / dateIdx / timeIdx (no indexOf in the loop).
       let fullTimestamp = null;
       if (tsIdx > -1) {
         const tsVal = row[tsIdx];
-        const dateVal = (dateIdx > -1) ? row[dateIdx] : null;
-        const timeVal = (timeIdx > -1) ? row[timeIdx] : null;
+        const dateVal = dateIdx > -1 ? row[dateIdx] : null;
+        const timeVal = timeIdx > -1 ? row[timeIdx] : null;
 
         fullTimestamp = parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
 
@@ -227,13 +246,13 @@ function validateAndCleanImportToHelperV3() {
           const derivedDate = new Date(
             fullTimestamp.getFullYear(),
             fullTimestamp.getMonth(),
-            fullTimestamp.getDate()
+            fullTimestamp.getDate(),
           );
-          const derivedTime = Utilities.formatDate(fullTimestamp, tz, 'HH:mm');
+          const derivedTime = Utilities.formatDate(fullTimestamp, tz, "HH:mm");
           if (dateIdx > -1) cleanRow[dateIdx] = derivedDate;
           if (timeIdx > -1) cleanRow[timeIdx] = derivedTime;
         } else {
-          errorMsg = 'Invalid Trade Time Stamp';
+          errorMsg = "Invalid Trade Time Stamp";
         }
       }
 
@@ -245,23 +264,34 @@ function validateAndCleanImportToHelperV3() {
       // Rule: blank Ticker OR blank Strategy Type → blank Trade Type.
       // Only rows with an explicit Strategy Type keyword get a derived Trade Type.
       if (tickerIdx > -1 && strategyTypeIdx > -1 && tradeTypeIdx > -1) {
-        const ticker = (row[tickerIdx] || '').toString().trim().toUpperCase();
-        const strategyType = (row[strategyTypeIdx] || '').toString().trim().toUpperCase();
+        const ticker = (row[tickerIdx] || "").toString().trim().toUpperCase();
+        const strategyType = (row[strategyTypeIdx] || "")
+          .toString()
+          .trim()
+          .toUpperCase();
         if (ticker && strategyType) {
-          let tradeType = 'Option';
+          let tradeType = "Option";
 
           // A row with no Strike AND no Expiration is a stock row, full stop.
           // Catches settlement stock-delivery legs whose Strategy Type was forward-filled
           // from the parent spread (e.g. SHORT IC) which would otherwise derive 'Option'.
-          const hasNoOptionFields = !cleanRow[strikeOCIdx] && !cleanRow[expOCIdx];
-          if (hasNoOptionFields || strategyType.includes('STOCK')) tradeType = 'Stock';
-          else if (strategyType.includes('PCS') || strategyType.includes('PDS') ||
-            strategyType.includes('CCS') || strategyType.includes('CDS') ||
-            strategyType.includes('BUTTERFLY') || strategyType.includes('IRON CONDOR')) tradeType = 'Spread';
+          const hasNoOptionFields =
+            !cleanRow[strikeOCIdx] && !cleanRow[expOCIdx];
+          if (hasNoOptionFields || strategyType.includes("STOCK"))
+            tradeType = "Stock";
+          else if (
+            strategyType.includes("PCS") ||
+            strategyType.includes("PDS") ||
+            strategyType.includes("CCS") ||
+            strategyType.includes("CDS") ||
+            strategyType.includes("BUTTERFLY") ||
+            strategyType.includes("IRON CONDOR")
+          )
+            tradeType = "Spread";
 
           cleanRow[tradeTypeIdx] = tradeType;
         } else {
-          cleanRow[tradeTypeIdx] = '';
+          cleanRow[tradeTypeIdx] = "";
         }
       }
 
@@ -269,25 +299,34 @@ function validateAndCleanImportToHelperV3() {
       // WHY: SYMBOL CHANGE and SPLIT rows may legally survive validation even
       // with sparse upstream fields, but Helper should still classify them as
       // stock-lineage rows so Staging does not have to guess.
-      const corpActionVal = (corpActionsIdx > -1 ? cleanRow[corpActionsIdx] : '')
-        .toString().trim().toUpperCase();
-      const cleanActionVal = (actionIdx > -1 ? cleanRow[actionIdx] : '')
-        .toString().trim().toUpperCase();
-      const cleanTickerVal = (tickerIdx > -1 ? cleanRow[tickerIdx] : '')
-        .toString().trim().toUpperCase();
+      const corpActionVal = (
+        corpActionsIdx > -1 ? cleanRow[corpActionsIdx] : ""
+      )
+        .toString()
+        .trim()
+        .toUpperCase();
+      const cleanActionVal = (actionIdx > -1 ? cleanRow[actionIdx] : "")
+        .toString()
+        .trim()
+        .toUpperCase();
+      const cleanTickerVal = (tickerIdx > -1 ? cleanRow[tickerIdx] : "")
+        .toString()
+        .trim()
+        .toUpperCase();
 
       if (
         cleanTickerVal &&
-        (
-          corpActionVal === 'SYMBOL CHANGE' ||
-          corpActionVal === 'SPLIT' ||
-          cleanActionVal === 'SYMBOL CHANGE' ||
-          cleanActionVal === 'SPLIT'
-        )
+        (corpActionVal === "SYMBOL CHANGE" ||
+          corpActionVal === "SPLIT" ||
+          cleanActionVal === "SYMBOL CHANGE" ||
+          cleanActionVal === "SPLIT")
       ) {
-        if (tradeTypeIdx > -1) cleanRow[tradeTypeIdx] = 'Stock';
-        if (strategyTypeIdx > -1 && !String(cleanRow[strategyTypeIdx] || '').trim()) {
-          cleanRow[strategyTypeIdx] = 'LONG STOCK';
+        if (tradeTypeIdx > -1) cleanRow[tradeTypeIdx] = "Stock";
+        if (
+          strategyTypeIdx > -1 &&
+          !String(cleanRow[strategyTypeIdx] || "").trim()
+        ) {
+          cleanRow[strategyTypeIdx] = "LONG STOCK";
         }
       }
 
@@ -296,7 +335,7 @@ function validateAndCleanImportToHelperV3() {
       for (let u = 0; u < uppercaseColIndices.length; u++) {
         const idx = uppercaseColIndices[u];
         if (idx > -1) {
-          cleanRow[idx] = (cleanRow[idx] || '').toString().trim().toUpperCase();
+          cleanRow[idx] = (cleanRow[idx] || "").toString().trim().toUpperCase();
         }
       }
 
@@ -304,8 +343,13 @@ function validateAndCleanImportToHelperV3() {
       // "$SPX.X" → "SPX" | "$NDX.X" → "NDX" | "SPY" → "SPY" (no change).
       // Uses hoisted tickerIdx.
       if (tickerIdx > -1) {
-        const tkrRaw = (cleanRow[tickerIdx] || '').toString().trim().toUpperCase();
-        const tkrNormalized = tkrRaw.replace(/^\$/, '').replace(/\.[A-Z]+$/, '');
+        const tkrRaw = (cleanRow[tickerIdx] || "")
+          .toString()
+          .trim()
+          .toUpperCase();
+        const tkrNormalized = tkrRaw
+          .replace(/^\$/, "")
+          .replace(/\.[A-Z]+$/, "");
         if (tkrNormalized !== tkrRaw) {
           tickerNormCount++;
           cleanRow[tickerIdx] = tkrNormalized;
@@ -318,10 +362,15 @@ function validateAndCleanImportToHelperV3() {
       // Uses hoisted signedQuantityIdx / quantityIdx / actionIdx.
       if (signedQuantityIdx > -1 && quantityIdx > -1 && actionIdx > -1) {
         const qtyVal = Number(row[quantityIdx]);
-        const actionVal = (row[actionIdx] || '').toString().toUpperCase().trim();
+        const actionVal = (row[actionIdx] || "")
+          .toString()
+          .toUpperCase()
+          .trim();
         cleanRow[signedQuantityIdx] = !isNaN(qtyVal)
-          ? (actionVal.includes('SELL') ? -1 * qtyVal : qtyVal)
-          : '';
+          ? actionVal.includes("SELL")
+            ? -1 * qtyVal
+            : qtyVal
+          : "";
       }
 
       // ── 6. QUANTITY validation ────────────────────────────────────────────
@@ -330,7 +379,9 @@ function validateAndCleanImportToHelperV3() {
         const valNum = Number(row[quantityIdx]);
         cleanRow[quantityIdx] = !isNaN(valNum)
           ? valNum
-          : (row[quantityIdx] ? '❌ INVALID QTY' : '');
+          : row[quantityIdx]
+            ? "❌ INVALID QTY"
+            : "";
       }
 
       // ── 7. ENTRY PRICE validation ─────────────────────────────────────────
@@ -339,33 +390,41 @@ function validateAndCleanImportToHelperV3() {
         const valNum = Number(row[entryPriceIdx]);
         cleanRow[entryPriceIdx] = !isNaN(valNum)
           ? valNum
-          : (row[entryPriceIdx] ? '❌ INVALID PRICE' : '');
+          : row[entryPriceIdx]
+            ? "❌ INVALID PRICE"
+            : "";
       }
 
       // ── 8. OPTION CONTRACT: standardize to OCC format ────────────────────
       // Uses hoisted optionContractIdx / tickerIdx (reused) / strikeOCIdx /
       // expOCIdx / cpOCIdx.
-      if (optionContractIdx > -1 && tickerIdx > -1 &&
-        strikeOCIdx > -1 && expOCIdx > -1 && cpOCIdx > -1) {
-        const ocTicker = (row[tickerIdx] || '').toString().toUpperCase().trim();
+      if (
+        optionContractIdx > -1 &&
+        tickerIdx > -1 &&
+        strikeOCIdx > -1 &&
+        expOCIdx > -1 &&
+        cpOCIdx > -1
+      ) {
+        const ocTicker = (row[tickerIdx] || "").toString().toUpperCase().trim();
         const strike = Number(row[strikeOCIdx]);
         const exp = row[expOCIdx];
-        let cp = (row[cpOCIdx] || '').toString().toUpperCase().trim();
-        if (cp === 'CALL') cp = 'C';
-        if (cp === 'PUT') cp = 'P';
+        let cp = (row[cpOCIdx] || "").toString().toUpperCase().trim();
+        if (cp === "CALL") cp = "C";
+        if (cp === "PUT") cp = "P";
 
-        let expDatePart = '';
+        let expDatePart = "";
         if (exp) {
           if (exp instanceof Date) {
             const yy = String(exp.getFullYear()).slice(-2);
-            const mm = String(exp.getMonth() + 1).padStart(2, '0');
-            const dd = String(exp.getDate()).padStart(2, '0');
+            const mm = String(exp.getMonth() + 1).padStart(2, "0");
+            const dd = String(exp.getDate()).padStart(2, "0");
             expDatePart = yy + mm + dd;
           } else {
             const expStr = exp.toString().trim();
             const dateMatch = expStr.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
             if (dateMatch) {
-              expDatePart = dateMatch[3].slice(-2) + dateMatch[1] + dateMatch[2];
+              expDatePart =
+                dateMatch[3].slice(-2) + dateMatch[1] + dateMatch[2];
             } else if (expStr.length === 8 && /^\d{8}$/.test(expStr)) {
               expDatePart = expStr.slice(2);
             }
@@ -373,12 +432,17 @@ function validateAndCleanImportToHelperV3() {
         }
 
         const strikePart = !isNaN(strike)
-          ? String(Math.round(strike * 1000)).padStart(8, '0')
-          : '';
+          ? String(Math.round(strike * 1000)).padStart(8, "0")
+          : "";
 
-        if (ocTicker && expDatePart && (cp === 'C' || cp === 'P') && strikePart) {
+        if (
+          ocTicker &&
+          expDatePart &&
+          (cp === "C" || cp === "P") &&
+          strikePart
+        ) {
           cleanRow[optionContractIdx] =
-            ocTicker.replace(/[^A-Z]/g, '') + expDatePart + cp + strikePart;
+            ocTicker.replace(/[^A-Z]/g, "") + expDatePart + cp + strikePart;
         }
       }
 
@@ -386,19 +450,29 @@ function validateAndCleanImportToHelperV3() {
       // Uses hoisted actionIdx / accountIdx / tickerIdx / quantityIdx /
       // tradeTypeIdx / strikeOCIdx / expOCIdx / cpOCIdx /
       // corpActionsIdx / accountActionsIdx.
-      const actionRaw = (row[actionIdx] || '').toString().trim().toUpperCase();
-      const isTradeRow = ['BUY TO OPEN', 'SELL TO OPEN', 'BUY TO CLOSE', 'SELL TO CLOSE']
-        .includes(actionRaw);
+      const actionRaw = (row[actionIdx] || "").toString().trim().toUpperCase();
+      const isTradeRow = [
+        "BUY TO OPEN",
+        "SELL TO OPEN",
+        "BUY TO CLOSE",
+        "SELL TO CLOSE",
+      ].includes(actionRaw);
 
-      const acct = (accountIdx > -1 ? row[accountIdx] : '')
-        .toString().trim().toUpperCase();
-      if (acct !== 'DT' && acct !== 'LT') errorMsg = 'Account must be DT or LT';
+      const acct = (accountIdx > -1 ? row[accountIdx] : "")
+        .toString()
+        .trim()
+        .toUpperCase();
+      if (acct !== "DT" && acct !== "LT") errorMsg = "Account must be DT or LT";
 
-      const tickerVal = (tickerIdx > -1 ? row[tickerIdx] : '').toString().trim().toUpperCase();
-      if (isTradeRow && !tickerVal) errorMsg = 'Ticker required for trade actions';
+      const tickerVal = (tickerIdx > -1 ? row[tickerIdx] : "")
+        .toString()
+        .trim()
+        .toUpperCase();
+      if (isTradeRow && !tickerVal)
+        errorMsg = "Ticker required for trade actions";
 
-      const qtyCheck = Number(quantityIdx > -1 ? row[quantityIdx] : '');
-      if (isTradeRow && isNaN(qtyCheck)) errorMsg = 'Quantity must be a number';
+      const qtyCheck = Number(quantityIdx > -1 ? row[quantityIdx] : "");
+      if (isTradeRow && isNaN(qtyCheck)) errorMsg = "Quantity must be a number";
 
       // --- AFTER ---
       // WHY: Read tradeTypeCheck from cleanRow (not raw row) because Trade Type
@@ -408,33 +482,50 @@ function validateAndCleanImportToHelperV3() {
       // cleanRow so Step 8 normalizations are visible here.
       // WHY: Wrap in !nonTradeActions guard so RAD, JRN, EFN etc. never reach the
       // option field check — they legitimately have no Strike/Exp/C-P requirement.
-      const tradeTypeCheck = (tradeTypeIdx > -1 ? cleanRow[tradeTypeIdx] : '')
-        .toString().trim().toUpperCase();
-      if (!nonTradeActions.includes(actionRaw) &&
-        (tradeTypeCheck.includes('OPTION') || tradeTypeCheck.includes('SPREAD'))) {
-        if (!(strikeOCIdx > -1 && cleanRow[strikeOCIdx]) ||
+      const tradeTypeCheck = (tradeTypeIdx > -1 ? cleanRow[tradeTypeIdx] : "")
+        .toString()
+        .trim()
+        .toUpperCase();
+      if (
+        !nonTradeActions.includes(actionRaw) &&
+        (tradeTypeCheck.includes("OPTION") || tradeTypeCheck.includes("SPREAD"))
+      ) {
+        if (
+          !(strikeOCIdx > -1 && cleanRow[strikeOCIdx]) ||
           !(expOCIdx > -1 && cleanRow[expOCIdx]) ||
-          !(cpOCIdx > -1 && cleanRow[cpOCIdx])) {
-          errorMsg = 'Options need Strike, Expiration, Call/Put';
+          !(cpOCIdx > -1 && cleanRow[cpOCIdx])
+        ) {
+          errorMsg = "Options need Strike, Expiration, Call/Put";
         }
       }
 
       // Corporate / ledger rows clear any validation error — they don't need
       // Ticker, Quantity, or option fields.
-      const corpAction = (corpActionsIdx > -1) ? row[corpActionsIdx] : '';
-      const accountAction = (accountActionsIdx > -1) ? row[accountActionsIdx] : '';
+      const corpAction = corpActionsIdx > -1 ? row[corpActionsIdx] : "";
+      const accountAction =
+        accountActionsIdx > -1 ? row[accountActionsIdx] : "";
       if (corpAction || accountAction || nonTradeActions.includes(actionRaw)) {
-        errorMsg = '';
+        errorMsg = "";
       }
 
       if (errorMsg) {
-        errors.push([r + 4, 'Action/Ticker', errorMsg, 'Fix in Import sheet and re-run']);
-        importIssuesAdd(ctx, 'ERROR', r + 4, 'Action/Ticker', errorMsg,
-          'Row excluded from Helper — fix in Import and re-run');
+        errors.push([
+          r + 4,
+          "Action/Ticker",
+          errorMsg,
+          "Fix in Import sheet and re-run",
+        ]);
+        importIssuesAdd(
+          ctx,
+          "ERROR",
+          r + 4,
+          "Action/Ticker",
+          errorMsg,
+          "Row excluded from Helper — fix in Import and re-run",
+        );
       } else {
         outputRows.push(cleanRow);
       }
-
     } // end main row loop
 
     // ── SAFE CLEAR both sheets before writing ─────────────────────────────────
@@ -442,61 +533,83 @@ function validateAndCleanImportToHelperV3() {
     // bottom would silently flow into Staging on the next block-logic pass.
     const helperLastRow = helperSheet.getLastRow();
     if (helperLastRow >= 4) {
-      helperSheet.getRange(4, 1, helperLastRow - 3, helperSheet.getLastColumn()).clearContent();
+      helperSheet
+        .getRange(4, 1, helperLastRow - 3, helperSheet.getLastColumn())
+        .clearContent();
     }
     const importLastRow = importSheet.getLastRow();
     if (importLastRow >= 4) {
-      importSheet.getRange(4, 1, importLastRow - 3, importSheet.getLastColumn()).clearContent();
+      importSheet
+        .getRange(4, 1, importLastRow - 3, importSheet.getLastColumn())
+        .clearContent();
     }
 
     // Write clean rows to both Helper and Import
     if (outputRows.length > 0) {
-      helperSheet.getRange(4, 1, outputRows.length, importData[0].length).setValues(outputRows);
-      importSheet.getRange(4, 1, outputRows.length, importData[0].length).setValues(outputRows);
+      helperSheet
+        .getRange(4, 1, outputRows.length, importData[0].length)
+        .setValues(outputRows);
+      importSheet
+        .getRange(4, 1, outputRows.length, importData[0].length)
+        .setValues(outputRows);
     }
 
     // === FORCE CORRECT DISPLAY FORMATS ON BOTH SHEETS ===
     if (outputRows.length > 0) {
       const tsColNum = tsIdx + 1;
       const timeColNum = timeIdx + 1;
-      importSheet.getRange(4, tsColNum, outputRows.length, 1).setNumberFormat('M/d/yyyy HH:mm');
-      importSheet.getRange(4, timeColNum, outputRows.length, 1).setNumberFormat('HH:mm');
-      helperSheet.getRange(4, tsCol, outputRows.length, 1).setNumberFormat('M/d/yyyy HH:mm');
-      helperSheet.getRange(4, timeColNum, outputRows.length, 1).setNumberFormat('HH:mm');
+      importSheet
+        .getRange(4, tsColNum, outputRows.length, 1)
+        .setNumberFormat("M/d/yyyy HH:mm");
+      importSheet
+        .getRange(4, timeColNum, outputRows.length, 1)
+        .setNumberFormat("HH:mm");
+      helperSheet
+        .getRange(4, tsCol, outputRows.length, 1)
+        .setNumberFormat("M/d/yyyy HH:mm");
+      helperSheet
+        .getRange(4, timeColNum, outputRows.length, 1)
+        .setNumberFormat("HH:mm");
     }
 
     // Write validation errors to the Validation Errors sheet if any
     if (errors.length > 0) {
-      errorSheet.getRange(errorSheet.getLastRow() + 1, 1, errors.length, 4).setValues(errors);
+      errorSheet
+        .getRange(errorSheet.getLastRow() + 1, 1, errors.length, 4)
+        .setValues(errors);
     }
 
     // ── CTX: finalize metrics ───────────────────────────────────────────────
-    importIssuesSetMetric(ctx, 'RowsWrittenExclHeader', outputRows.length);
-    importIssuesSetMetric(ctx, 'ValidationErrors', errors.length);
-    importIssuesSetMetric(ctx, 'TickerNormalizations', tickerNormCount);
-    importIssuesSetMetric(ctx, 'Success', '1');
+    importIssuesSetMetric(ctx, "RowsWrittenExclHeader", outputRows.length);
+    importIssuesSetMetric(ctx, "ValidationErrors", errors.length);
+    importIssuesSetMetric(ctx, "TickerNormalizations", tickerNormCount);
+    importIssuesSetMetric(ctx, "Success", "1");
     // ────────────────────────────────────────────────────────────────────────
 
     // Generic post-run check for Google server-side date rendering gaps.
-    checkMissingDateTimeAndAlert(helperSheet, 4, 'validateAndCleanImportToHelperV3');
+    checkMissingDateTimeAndAlert(
+      helperSheet,
+      4,
+      "validateAndCleanImportToHelperV3",
+    );
 
     if (errors.length > 0) {
-      SpreadsheetApp.getUi().alert(
-        '⚠️ Validation found ' + errors.length + ' errors — check Validation Errors sheet!'
+      uiAlertSafe(
+        "⚠️ Validation found " +
+          errors.length +
+          " errors — check Validation Errors sheet!",
       );
     } else {
-      SpreadsheetApp.getUi().alert(
-        '✅ All data pristine — Import and Helper now have FULL derivations and correct display!'
+      uiAlertSafe(
+        "✅ All data pristine — Import and Helper now have FULL derivations and correct display!",
       );
     }
-
   } catch (e) {
     // ── PRIORITY 1: Crash handler — log error metrics then re-throw ──────────
-    importIssuesSetMetric(ctx, 'Success', '0');
-    importIssuesSetMetric(ctx, 'ErrorMessage', e.message);
-    importIssuesSetMetric(ctx, 'ErrorStack', (e.stack || '').substring(0, 500));
+    importIssuesSetMetric(ctx, "Success", "0");
+    importIssuesSetMetric(ctx, "ErrorMessage", e.message);
+    importIssuesSetMetric(ctx, "ErrorStack", (e.stack || "").substring(0, 500));
     throw e;
-
   } finally {
     // ── PRIORITY 1: ALWAYS flush — even on throw ──────────────────────────
     // The old placement of stagingIssuesFlush(ctx) was at the end of the normal
