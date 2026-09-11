@@ -327,7 +327,27 @@ function createMappingSheetHelpers(opts) {
     } else if (u.includes("STOCK MERGER")) {
       phrase = "STOCK MERGER";
     } else {
-      return null;
+      // Abbreviated credit-side receipt, e.g.
+      //   "F4 URANIUM CORP F 336.0 FFUCF"
+      // Company words, one action letter, qty, new ticker.
+      // Phrase is a stable map key; it does not appear in the TOS text.
+      const abbr = u.match(
+        /\b([A-Z])\s+([-+]?\d+(?:\.\d+)?)\s+([A-Z]{1,6})\s*$/,
+      );
+      if (!abbr) return null;
+      const rawQtyAbbr = Number(abbr[2]);
+      const parsedQtyAbbr = Math.abs(rawQtyAbbr);
+      if (!isFinite(parsedQtyAbbr) || parsedQtyAbbr <= 0) return null;
+      const rawTokenAbbr = String(abbr[3] || "").toUpperCase();
+      if (!rawTokenAbbr) return null;
+      return {
+        phrase: "CORP ACTION RECEIVED SHARES",
+        rawQty: rawQtyAbbr,
+        parsedQty: parsedQtyAbbr,
+        rawToken: rawTokenAbbr,
+        resolvedSymbol: normalizeSymbol(rawTokenAbbr),
+        rawText: u,
+      };
     }
 
     const afterPhrase = u.substring(u.indexOf(phrase) + phrase.length).trim();
@@ -395,9 +415,7 @@ function createMappingSheetHelpers(opts) {
     const idxResultSymbol = hdr.indexOf("ResultSymbol"); // optional
 
     if (idxToken < 0 && idxPhrase < 0)
-      throw new Error(
-        "CorpActionsMap must have Token and/or Phrase columns.",
-      );
+      throw new Error("CorpActionsMap must have Token and/or Phrase columns.");
     if (idxToken >= 0 && idxTokenAction < 0)
       throw new Error("CorpActionsMap missing TokenAction header.");
     if (idxPhrase >= 0 && idxPhraseAction < 0)
