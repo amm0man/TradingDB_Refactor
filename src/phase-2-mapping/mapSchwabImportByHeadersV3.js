@@ -605,6 +605,27 @@ function mapSchwabImportByHeadersV3() {
         }
       }
 
+      // Ticker alias: if the resolved ticker is listed as a Corp Action Map
+      // pattern, use that row's Ticker. Example: QUALIFIED DIVIDEND~PKI
+      // plus map row PKI | RVTY → write RVTY so Phase 3 stays on one position.
+      // Exact pattern match only (PKI = PKI). Long company-name patterns
+      // such as "F3 URANIUM CORP" are not aliases and are left alone.
+      if (ticker && corpActionMap && corpActionMap.length) {
+        const tkrKey = String(ticker).trim().toUpperCase();
+        for (let a = 0; a < corpActionMap.length; a++) {
+          const entry = corpActionMap[a];
+          if (
+            entry.pattern === tkrKey &&
+            entry.ticker &&
+            entry.ticker !== tkrKey
+          ) {
+            ticker = entry.ticker;
+            corpTickerFromMap++;
+            break;
+          }
+        }
+      }
+
       mapped[col(mappingHeaderMap, "Ticker")] = ticker;
 
       // Order Type + Description
@@ -2043,8 +2064,6 @@ function applyCashFlowFromMapV3(
   mappedRow[col(mappingHeaderMap, "Cash Flow Direction")] = dir;
   mappedRow[col(mappingHeaderMap, "Transfer Type")] = type;
 }
-
-
 
 // =========================================================================
 // STRATEGY TYPE POST-PROCESSORS
