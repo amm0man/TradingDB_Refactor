@@ -14,9 +14,10 @@
  *   - mapSchwabImportByHeadersV3.js  (writes Schwab Mapping)
  *   - ImportIssues.js                (mappingIssues* + uiAlertSafe via Helpers.js)
  *
- * Do not change audit rules in this extract. Body is a straight move.
+ * Gate pack 2026-09-12: CHECK 13 (required headers), CHECK 14 (Strategy Type
+ * on trades), CHECK 15 (numeric / scientific ticker), CHECK 16 (Action
+ * Phase 3 does not understand).
  */
-
 
 // ============================================================================
 // Pre-Phase-3 Schwab Mapping Audit
@@ -124,6 +125,44 @@ function auditSchwabMappingV3() {
     "Corp Action Received Shares",
   ]);
 
+  // ── CHECK 13 allow-lists (Phase 3 verbs + columns Step 1/2 actually read)
+  const REQUIRED_MAPPING_HEADERS = [
+    "Account",
+    "Trade Time Stamp",
+    "Trade Date",
+    "Trade Time",
+    "Ticker",
+    "Action",
+    "Quantity",
+    "Entry Price",
+    "Strategy Type",
+    "Option Strike",
+    "Option Expiration",
+    "Call/Put",
+    "Corporate Actions",
+    "Account Actions",
+    "Notes",
+    "Description",
+  ];
+
+  // Exact Action strings Phase 3 applies a delta or a special handler to.
+  // Compare with action.toUpperCase(). Blank Action is CHECK 12, not 16.
+  const KNOWN_PHASE3_ACTIONS = new Set([
+    "BUY TO OPEN",
+    "SELL TO OPEN",
+    "BUY TO CLOSE",
+    "SELL TO CLOSE",
+    "RAD",
+    "EXP",
+    "DOI",
+    "JRN",
+    "EFN",
+    "CRC",
+    "CDB",
+    "SPLIT",
+    "SYMBOL CHANGE",
+  ]);
+
   let totalRows = 0;
   let auditErrors = 0;
   let auditWarns = 0;
@@ -131,6 +170,27 @@ function auditSchwabMappingV3() {
   // For Pass 2 cross-reference check.
   const tradeTickers = new Set(); // tickers seen on actual trade rows
   const corpOnlyTickers = new Map(); // ticker → first sheet row; corp action rows only
+
+  // ── CHECK 13: Required headers Phase 3 reads by name ───────────────────
+  // Runs once. A missing column becomes blank in copyMappingToImportByHeaders
+  // and never shows up as a row-level Mapping error.
+  for (let h = 0; h < REQUIRED_MAPPING_HEADERS.length; h++) {
+    const headerName = REQUIRED_MAPPING_HEADERS[h];
+    const idx = hm[String(headerName).trim().toLowerCase()];
+    if (idx === undefined) {
+      mappingIssuesAdd(
+        ctx,
+        "ERROR",
+        "",
+        "Header",
+        headerName,
+        'Schwab Mapping is missing required column "' +
+          headerName +
+          '". Phase 3 copies by header name, so this field will be blank on every row.',
+      );
+      auditErrors++;
+    }
+  }
 
   // ──────────────────────────────────────────────────────────────────────────
   // PASS 1 — Row-level checks
@@ -159,6 +219,7 @@ function auditSchwabMappingV3() {
       .trim()
       .toUpperCase();
     const rawDesc = String(get(row, "Description") || "").trim();
+    const strategyType = String(get(row, "Strategy Type") || "").trim();
 
     const isTrade = action.includes(" to "); // "Buy to Open", "Sell to Close", etc.
     const hasStrike =
@@ -256,6 +317,52 @@ function auditSchwabMappingV3() {
           '" has no Ticker. Cannot build blocks in Phase 3.',
       );
       auditErrors++;
+    }
+
+    // ── CHECK 14: Trade row — Strategy Type required ─────────────────────
+    // Phase 3 Step 2 only derives Trade Type when Ticker AND Strategy Type
+    // are both filled. Block logic then does:
+    //   if (!tradeType && ticker) tradeType = "OPTION";
+    // A Buy to Open stock with blank Strategy Type is therefore bucketed as
+    // an option (key Account|Ticker|||0|) and pollutes the stock block.
+    if (isTrade && !strategyType) {
+      mappingIssuesAdd(
+        ctx,
+        "ERROR",
+        rowNum,
+        "Strategy Type",
+        "",
+        'Trade row Action = "' +
+          action +
+          '" Ticker = "' +
+          ticker +
+          '" has no Strategy Type. Phase 3 will treat a blank Trade Type + Ticker as OPTION.',
+      );
+      auditErrors++;
+    }
+
+    // ── CHECK 15: Ticker is a number or scientific notation ──────────────
+    // Catches Sheets coercion leftovers (0E-4 → 0.00E+00) and parser scraps
+    // that CHECK 5 misses because the cell is not blank, just not a ticker.
+    // Blank ticker on a trade is CHECK 5. Do not also flag blanks here.
+    if (ticker) {
+      const isPlainNumber = /^\d+(\.\d+)?$/.test(ticker);
+      const isSciTicker = /^\d+(\.\d+)?E[+-]?\d+$/.test(ticker);
+      if (isPlainNumber || isSciTicker) {
+        mappingIssuesAdd(
+          ctx,
+          "ERROR",
+          rowNum,
+          "Ticker",
+          ticker,
+          'Ticker "' +
+            ticker +
+            '" is a number or scientific notation, not a symbol. ' +
+            "Usually a fractional-qty parse (e.g. TOS 1.0E-4) or Sheets coercing 0E-4 to 0. " +
+            "Fix upstream in parseTosTopTradeDescription, then rebuild Unified + Mapping.",
+        );
+        auditErrors++;
+      }
     }
 
     // ── CHECK 6: Corp action row — Ticker required for non-cash types ────
@@ -461,6 +568,33 @@ function auditSchwabMappingV3() {
       );
       auditWarns++;
     }
+
+    // ── CHECK 16: Action is not a verb Phase 3 understands ───────────────
+    // Phase 3 only applies position delta for the four * to Open/Close
+    // actions, plus RAD / SPLIT / SYMBOL CHANGE handlers. "Buy" or "BOT"
+    // with a filled qty never opens a block (delta stays 0) and also skips
+    // CHECK 5–10 because isTrade requires " to " in Action.
+    // Blank Action is CHECK 12. Do not double-count it here.
+    if (action) {
+      const actionUpper = action.toUpperCase();
+      if (!KNOWN_PHASE3_ACTIONS.has(actionUpper)) {
+        mappingIssuesAdd(
+          ctx,
+          "WARN",
+          rowNum,
+          "Action",
+          action,
+          'Action "' +
+            action +
+            '" is not a Phase 3 verb. Position delta will be 0 unless this is a tagged non-trade. ' +
+            "Expected Buy/Sell to Open/Close, or RAD/EXP/DOI/JRN/EFN/CRC/CDB/SPLIT/SYMBOL CHANGE. " +
+            'Description: "' +
+            rawDesc.substring(0, 60) +
+            '"',
+        );
+        auditWarns++;
+      }
+    }
   } // end Pass 1
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -483,8 +617,8 @@ function auditSchwabMappingV3() {
   const VERIFIED_CORP_ONLY_TICKERS = new Set([
     // 'JEPI',  // example: confirmed ETF held long-term, dividends only in this dataset
     // 'URNM',  // example: confirmed after manual check
-    'PALAF', // added 9/11/26 PALAF had a reverse split so has an entry in Corp Actions. Resolves thru Phase 3 block logic correctly
-    'ISOU'  // added after verifying this is a reverse split on 2025-3-25. Resolves thru Phase 3 block logic correctly
+    "PALAF", // added 9/11/26 PALAF had a reverse split so has an entry in Corp Actions. Resolves thru Phase 3 block logic correctly
+    "ISOU", // added after verifying this is a reverse split on 2025-3-25. Resolves thru Phase 3 block logic correctly
   ]);
 
   let crossRefWarns = 0;
