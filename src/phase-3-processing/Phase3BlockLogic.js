@@ -696,6 +696,78 @@ function populateStagingWithBlockLogicV3() {
         const oldBlock = blocks[oldKey];
 
         if (!oldBlock || !oldBlock.positionId) {
+          // Source token has no live block. Common and usually not a hole:
+          //   1) TOS emits a duplicate SYMBOL CHANGE after the first row
+          //      already moved Account|FROM → Account|TO.
+          //   2) Phase 1 already booked the shares under the destination
+          //      ticker (LURAF spin-off, PAUIF emit) so FROM never opened.
+          //   3) CUSIP listing change where FROM_RESOLVED === TO_RESOLVED.
+          // Attach the row to the destination block when one is live.
+          // WARN only when there is no source, no dest, and it is not a no-op.
+          const destTickerForLookup = String(
+            targetTicker || outputTicker || "",
+          )
+            .trim()
+            .toUpperCase();
+          const destKey = destTickerForLookup
+            ? `${acct}|${destTickerForLookup}`
+            : "";
+          const destBlock = destKey ? blocks[destKey] : null;
+          const destLive = !!(destBlock && destBlock.positionId);
+          const isNoOpRename =
+            !!fromTicker &&
+            !!destTickerForLookup &&
+            fromTicker === destTickerForLookup;
+
+          if (destLive) {
+            if (colMap["ticker"] !== undefined)
+              row[colMap["ticker"] - 1] = outputTicker || destTickerForLookup;
+            if (colMap["trade group id"] !== undefined)
+              row[colMap["trade group id"] - 1] = destBlock.tradeGroupId || "";
+            if (colMap["position id"] !== undefined)
+              row[colMap["position id"] - 1] = destBlock.positionId || "";
+            if (colMap["block number"] !== undefined)
+              row[colMap["block number"] - 1] = destBlock.block || "";
+            if (colMap["block start flag"] !== undefined)
+              row[colMap["block start flag"] - 1] = 0;
+            if (colMap["block close flag/p&l"] !== undefined)
+              row[colMap["block close flag/p&l"] - 1] = 0;
+            if (colMap["running position quantity"] !== undefined) {
+              row[colMap["running position quantity"] - 1] = Number(
+                destBlock.runningQty || 0,
+              );
+            }
+            if (colMap["trade status"] !== undefined) {
+              row[colMap["trade status"] - 1] =
+                Number(destBlock.runningQty || 0) === 0 ? "Closed" : "Open";
+            }
+            importIssuesAdd(
+              ctx,
+              "INFO",
+              dataStartRow + i,
+              "Ticker",
+              fromTicker + " -> " + (outputTicker || destTickerForLookup),
+              "SYMBOL CHANGE had no live source block; attached to existing destination block (duplicate rename or shares already booked under dest).",
+            );
+            continue;
+          }
+
+          if (isNoOpRename) {
+            importIssuesAdd(
+              ctx,
+              "INFO",
+              dataStartRow + i,
+              "Ticker",
+              fromTicker + " -> " + destTickerForLookup,
+              "SYMBOL CHANGE is a same-ticker listing/CUSIP no-op with no stock block under that token. Left unlinked on purpose.",
+            );
+            if (colMap["position id"] !== undefined)
+              row[colMap["position id"] - 1] = "";
+            if (colMap["trade group id"] !== undefined)
+              row[colMap["trade group id"] - 1] = "";
+            continue;
+          }
+
           importIssuesAdd(
             ctx,
             "WARN",
