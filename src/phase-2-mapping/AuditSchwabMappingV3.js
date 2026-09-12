@@ -471,7 +471,8 @@ function auditSchwabMappingV3() {
   const VERIFIED_CORP_ONLY_TICKERS = new Set([
     // 'JEPI',  // example: confirmed ETF held long-term, dividends only in this dataset
     // 'URNM',  // example: confirmed after manual check
-    'PALAF' // added 9/11/26 PALAF had a reverse split so has an entry in Corp Actions. Resolves thru Phase 3 block logic correctly
+    'PALAF', // added 9/11/26 PALAF had a reverse split so has an entry in Corp Actions. Resolves thru Phase 3 block logic correctly
+    'ISOU'  // added after verifying this is a reverse split on 2025-3-25. Resolves thru Phase 3 block logic correctly
   ]);
 
   let crossRefWarns = 0;

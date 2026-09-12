@@ -1186,7 +1186,7 @@ function getAccountActionsKeywordRulesV3() {
     },
 
     { keyword: "reorganization fee", tag: "Reorganization Fee" },
-    { keyword: "non-taxable spin off", tag: "Non-Taxable Spinoff/Liquidation" },
+    
 
     { keyword: "incoming account transfer", tag: "Incoming Account Transfer" },
     { keyword: "outgoing account transfer", tag: "Outgoing Account Transfer" },
@@ -1201,12 +1201,11 @@ function getAccountActionsKeywordRulesV3() {
     { keyword: "malvern nation", tag: "ACH In or Out" },
     { keyword: "electronic funding", tag: "ACH In or Out" },
 
-    {
-      keyword: "miscellaneous journal entry",
-      tag: "Miscellaneous Journal Entry",
-    },
+    { keyword: "miscellaneous journal entry", tag: "Miscellaneous Journal Entry" },
     { keyword: "cash alternatives", tag: "Cash Alternatives Interest" },
     { keyword: "schwab1 int", tag: "Credit Interest" },
+
+    { keyword: "account migration from tda", tag: "Account Migration" },
   ];
 }
 
