@@ -61,22 +61,45 @@ function resolveLiveSpreadGroupId(
   spreadRangeMap,
   blocks,
 ) {
-  const rangeKey = `${acct}|${ticker}|${expStr}|${strat}`;
-  const rangeGroups = spreadRangeMap[rangeKey] || [];
-  const candidates = rangeGroups.filter(
-    (g) => strike >= g.min && strike <= g.max,
-  );
+  function candidatesFor(stratKey) {
+    const rangeKey = `${acct}|${ticker}|${expStr}|${stratKey}`;
+    const rangeGroups = spreadRangeMap[rangeKey] || [];
+    return rangeGroups.filter((g) => strike >= g.min && strike <= g.max);
+  }
+
+  let candidates = candidatesFor(strat);
+
+  // RAD / close Strategy Type often does not match the open
+  // (SHORT IC opens, CCS-forward-filled RADs). If the exact
+  // strategy bucket is empty, use any range on this account +
+  // ticker + expiration whose strike window contains this strike.
+  if (candidates.length === 0) {
+    const prefixAcct = String(acct || "").toUpperCase();
+    const prefixTkr = String(ticker || "").toUpperCase();
+    const prefixExp = String(expStr || "");
+    Object.keys(spreadRangeMap || {}).forEach(function (rangeKey) {
+      const parts = String(rangeKey).split("|");
+      if (parts.length < 4) return;
+      if (String(parts[0]).toUpperCase() !== prefixAcct) return;
+      if (String(parts[1]).toUpperCase() !== prefixTkr) return;
+      if (String(parts[2]) !== prefixExp) return;
+      const extra = (spreadRangeMap[rangeKey] || []).filter(
+        (g) => strike >= g.min && strike <= g.max,
+      );
+      extra.forEach(function (g) {
+        candidates.push(g);
+      });
+    });
+  }
 
   if (candidates.length === 0) return "";
   if (candidates.length === 1) return candidates[0].groupId;
 
-  // Multiple candidates — prefer the one whose block currently has unit > 0.
   for (const g of candidates) {
     const blockKey = `${acct}|${g.groupId}`;
     if ((blocks[blockKey] || {}).unit > 0) return g.groupId;
   }
 
-  // Fallback: first candidate (original behavior; safe for normal trades).
   return candidates[0].groupId;
 }
 
@@ -484,7 +507,8 @@ function populateStagingWithBlockLogicV3() {
           strat.includes("CCS") ||
           strat.includes("CDS") ||
           strat.includes("BUTTERFLY") ||
-          strat.includes("IRON CONDOR"));
+          strat.includes("IRON CONDOR") ||
+          strat.includes("IC"));
       if (!isSpreadOpen) continue;
 
       const acct = (row[colMap["account"] - 1] || "").toString().toUpperCase();
@@ -544,6 +568,7 @@ function populateStagingWithBlockLogicV3() {
       "CDS",
       "BUTTERFLY",
       "IRON CONDOR",
+      "IC",
     ];
 
     for (let i = 0; i < data.length; i++) {
@@ -704,9 +729,7 @@ function populateStagingWithBlockLogicV3() {
           //   3) CUSIP listing change where FROM_RESOLVED === TO_RESOLVED.
           // Attach the row to the destination block when one is live.
           // WARN only when there is no source, no dest, and it is not a no-op.
-          const destTickerForLookup = String(
-            targetTicker || outputTicker || "",
-          )
+          const destTickerForLookup = String(targetTicker || outputTicker || "")
             .trim()
             .toUpperCase();
           const destKey = destTickerForLookup
