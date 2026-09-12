@@ -76,9 +76,14 @@ function createSpecialParsers(opts) {
     // - "BOT+2 148929102 @40.82"
     // - "SOLD -1 148929102 @44.90"
     // - "SOLD-1 148929102 @44.90"
-    // Allow integer or decimal quantities (e.g. -100, +2, -0.0104)
+    // Allow integer, decimal, or scientific-notation quantities.
+    // Examples:
+    // - "BOT 2 XYZ @1.23"
+    // - "BOT +0.13 XOM @101.49692"
+    // - "SOLD -0.0104 WYNN @..."
+    // - "BOT 1.0E-4 NVDA UPON NVIDIA CORP"  (TOS writes tiny DRIP qtys this way)
     const qtyMatch = u.match(
-      /\b(BOT|BOUGHT|SOLD)\b\s*([+-]?(?:\d[\d,]*)(?:\.\d+)?)\b/,
+      /\b(BOT|BOUGHT|SOLD)\b\s*([+-]?(?:\d[\d,]*)(?:\.\d+)?(?:E[+-]?\d+)?)\b/,
     );
 
     if (!qtyMatch) return { symbol: null, absQty: null, price: null };
@@ -107,6 +112,13 @@ function createSpecialParsers(opts) {
       // and later logic will map the CUSIP to a ticker via CusipMap.
       const isPureNumber = /^\d+(\.\d+)?$/.test(tok);
       const isCusipCandidate = looksLikeCusip(tok);
+      
+      // Skip leftover scientific-notation scraps (0E-4, 1.0E-4) so they
+      // cannot become the ticker if qty parsing ever misses.
+      const isSciToken = /^[+-]?\d+(?:\.\d+)?E[+-]?\d+$/.test(tok);
+      if (isSciToken) continue;
+
+      if (isPureNumber && !isCusipCandidate) continue;
 
       if (isPureNumber && !isCusipCandidate) continue;
 
@@ -224,12 +236,7 @@ function createSpecialParsers(opts) {
     const descUpper = String(descRaw).trim().toUpperCase();
     const isSellSide = descUpper.startsWith("SOLD");
     if (!isSellSide) return false;
-    if (
-      absQty == null ||
-      absQty === undefined ||
-      isNaN(absQty) ||
-      absQty <= 0
-    )
+    if (absQty == null || absQty === undefined || isNaN(absQty) || absQty <= 0)
       return false;
     if (absQty % 1 === 0) return false; // whole-share sells go through the normal path
     const amt = toNum(amount);
@@ -398,17 +405,12 @@ function createSpecialParsers(opts) {
     }
 
     const qtyDelta =
-      preQty != null &&
-      isFinite(preQty) &&
-      postQty != null &&
-      isFinite(postQty)
+      preQty != null && isFinite(preQty) && postQty != null && isFinite(postQty)
         ? Math.round((postQty - preQty) * 1e8) / 1e8
         : null;
 
     const splitTypeLabel = isReverse ? "REVERSE SPLIT" : "FORWARD SPLIT";
-    const ratioLabel = adjSource
-      ? `${adjSource.num}:${adjSource.den}`
-      : "?:?";
+    const ratioLabel = adjSource ? `${adjSource.num}:${adjSource.den}` : "?:?";
     const preLabel = preQty != null && isFinite(preQty) ? preQty : "?";
     const postLabel = postQty != null && isFinite(postQty) ? postQty : "?";
     const splitDescOut = `${splitTypeLabel} ${ratioLabel} PRE=${preLabel} POST=${postLabel}`;
@@ -424,11 +426,7 @@ function createSpecialParsers(opts) {
         : (chosen.splitDateIso ?? "");
     const splitTimeDisplay =
       splitTs instanceof Date && !isNaN(splitTs.getTime())
-        ? Utilities.formatDate(
-            splitTs,
-            Session.getScriptTimeZone(),
-            "HH:mm:ss",
-          )
+        ? Utilities.formatDate(splitTs, Session.getScriptTimeZone(), "HH:mm:ss")
         : (chosen.splitTimeHHmmss ?? "");
 
     const rowObj = {
@@ -536,7 +534,8 @@ function createSpecialParsers(opts) {
     isTdaFractionalSellTrd: isTdaFractionalSellTrd,
     parseRadSplitDescription: parseRadSplitDescription,
     chooseCanonicalSplitCandidate_: chooseCanonicalSplitCandidate_,
-    buildCanonicalSplitRowFromCandidates_: buildCanonicalSplitRowFromCandidates_,
+    buildCanonicalSplitRowFromCandidates_:
+      buildCanonicalSplitRowFromCandidates_,
     parseRadRemovalDescription: parseRadRemovalDescription,
   };
 }

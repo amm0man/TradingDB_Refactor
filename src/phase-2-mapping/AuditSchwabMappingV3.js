@@ -301,22 +301,34 @@ function auditSchwabMappingV3() {
       }
     }
 
-    // ── CHECK 8: Trade row — Entry Price must be positive ────────────────
+    // ── CHECK 8: Trade row — Entry Price must be a number >= 0 ───────────
+    // Explicit 0 is valid:
+    //   - $0-basis stock receipts (spin-off, mandatory exchange, stock merger,
+    //     received shares) emitted/mapped as Buy to Open
+    //   - EXERCISE / ASSIGN option closes (TOS records option premium as 0;
+    //     the stock leg carries the strike cash)
+    // Blank / NaN / negative is still an ERROR.
+    // Note: Number("") === 0, so blank must be tested before converting.
     if (isTrade) {
-      const ep =
-        typeof entryPrice === "number"
+      const epEmpty =
+        entryPrice === "" ||
+        entryPrice === null ||
+        typeof entryPrice === "undefined";
+      const ep = epEmpty
+        ? NaN
+        : typeof entryPrice === "number"
           ? entryPrice
-          : Number(String(entryPrice || "").replace(/,/g, ""));
-      if (isNaN(ep) || ep <= 0) {
+          : Number(String(entryPrice).replace(/,/g, ""));
+      if (epEmpty || isNaN(ep) || ep < 0) {
         mappingIssuesAdd(
           ctx,
           "ERROR",
           rowNum,
           "Entry Price",
           String(entryPrice || ""),
-          'Trade row has zero or invalid Entry Price. Action = "' +
+          'Trade row has blank, negative, or invalid Entry Price. Action = "' +
             action +
-            '".',
+            '". Zero is allowed for $0 receipts and EXERCISE/ASSIGN closes.',
         );
         auditErrors++;
       }
