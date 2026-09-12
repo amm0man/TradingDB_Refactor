@@ -28,7 +28,8 @@
  *   - AuditSchwabMappingV3.js         (pre-Phase-3 gate; same Issues sheet)
  *   - MapAccountActions.js             (Group A – Account Actions helpers)
  *   - MapCorpActionRules.js            (Group E – corp keyword rules + scanner)
- * - MapTradeFields.js                (Group B – trade field builders)
+ *   - MapTradeFields.js                (Group B – trade field builders)
+ *   - MapCashFlow.js                   (Group F – Cash Map)
  *   - SettingsService.js
  * Current focus: clear high-level documentation before any structural refactoring.
  */
@@ -1770,99 +1771,12 @@ function sortMappingRowsByTradeTimeStamp(items, mappingHeaderMap) {
 }
 
 // =====================================================
-// Cash Map support (keep, but direction is Amount sign)
+// Cash Map support
+//   Moved to src/phase-2-mapping/MapCashFlow.js
+//   buildCashFlowMapFromSheet
+//   applyCashFlowFromMapV3
+//   Call sites in mapSchwabImportByHeadersV3() are unchanged.
 // =====================================================
-
-/** Build cashFlowMap from "Cash Map" sheet. Keyed by Account Actions. */
-function buildCashFlowMapFromSheet(ss) {
-  const sh = ss.getSheetByName(SHEET_CASH_MAP);
-  if (!sh) throw new Error("Could not find required sheet: " + SHEET_CASH_MAP);
-
-  const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2) return {};
-
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
-  const data = sh.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const hm = buildHeaderIndexMap(headers);
-
-  // Expect: Account Actions | CashFlowDir | Transfer Type
-  requireHeaders(
-    hm,
-    ["Account Actions", "CashFlowDir", "Transfer Type"],
-    SHEET_CASH_MAP,
-  );
-
-  const out = {};
-  for (let i = 0; i < data.length; i++) {
-    const r = data[i];
-    const action = String(r[col(hm, "Account Actions")] || "").trim();
-    if (!action) continue;
-
-    const dir = String(r[col(hm, "CashFlowDir")] || "").trim();
-    const type = String(r[col(hm, "Transfer Type")] || "").trim();
-
-    out[action] = { dir: dir, type: type };
-  }
-
-  return out;
-}
-
-/**
- * Apply Cash Flow Direction + Transfer Type:
- * - Direction: derived from Total Cost sign (your rule: direction from Amount sign)
- * - Transfer Type: from Cash Map if available, else fallback to Account Actions tag
- *
- * NOTE: called only on NON-TRADE rows in this script.
- */
-function applyCashFlowFromMapV3(
-  mappedRow,
-  mappingHeaderMap,
-  cashFlowMap,
-  ctx,
-  importRowNum,
-) {
-  const accountActionTag = String(
-    mappedRow[col(mappingHeaderMap, "Account Actions")] || "",
-  ).trim();
-  if (!accountActionTag) return;
-
-  // Transfer Type: prefer Cash Map
-  const meta = cashFlowMap[accountActionTag] || null;
-  const type = meta && meta.type ? meta.type : accountActionTag;
-
-  // Direction: sign of Total Cost (which for non-trade rows = import Amount)
-  const totalCostRaw = mappedRow[col(mappingHeaderMap, "Total Cost")];
-  const n =
-    typeof totalCostRaw === "number"
-      ? totalCostRaw
-      : Number(
-          String(totalCostRaw || "")
-            .replace(/[$,]/g, "")
-            .trim(),
-        );
-
-  let dir = "";
-  if (!isNaN(n) && n !== 0) dir = n > 0 ? "Inflow" : "Outflow";
-
-  // Fallback: if we cannot compute sign, use Cash Map direction ONLY as a last resort.
-  if (!dir && meta && meta.dir) dir = meta.dir;
-
-  if (!dir) {
-    mappingIssuesAdd(
-      ctx,
-      "WARN",
-      importRowNum,
-      "Cash Flow Direction",
-      "",
-      "Could not derive direction (Total Cost blank/0/non-numeric). Account Actions=" +
-        accountActionTag,
-    );
-  }
-
-  mappedRow[col(mappingHeaderMap, "Cash Flow Direction")] = dir;
-  mappedRow[col(mappingHeaderMap, "Transfer Type")] = type;
-}
 
 // =========================================================================
 // STRATEGY TYPE POST-PROCESSORS
