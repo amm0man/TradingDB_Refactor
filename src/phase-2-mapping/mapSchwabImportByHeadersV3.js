@@ -28,6 +28,7 @@
  *   - AuditSchwabMappingV3.js         (pre-Phase-3 gate; same Issues sheet)
  *   - MapAccountActions.js             (Group A – Account Actions helpers)
  *   - MapCorpActionRules.js            (Group E – corp keyword rules + scanner)
+ * - MapTradeFields.js                (Group B – trade field builders)
  *   - SettingsService.js
  * Current focus: clear high-level documentation before any structural refactoring.
  */
@@ -1358,67 +1359,16 @@ function normalizeImportTimeOnly(timeValue) {
   return cleaned.padStart(4, "0").slice(-4);
 }
 
-/** Identify trade rows strictly by Side + Pos Effect. */
-function isTradeBySidePosEffect(sideRaw, posEffectRaw) {
-  const side = String(sideRaw || "")
-    .trim()
-    .toUpperCase();
-  const pe = String(posEffectRaw || "")
-    .trim()
-    .toUpperCase();
-  if (side !== "BUY" && side !== "SELL") return false;
-  if (!pe.includes("OPEN") && !pe.includes("CLOSE")) return false;
-  return true;
-}
-
-/** Build "Buy to Open" etc. */
-function buildTradeAction(sideRaw, posEffectRaw) {
-  const side = String(sideRaw || "")
-    .trim()
-    .toUpperCase();
-  const pe = String(posEffectRaw || "")
-    .trim()
-    .toUpperCase();
-
-  const sideNice = side === "BUY" ? "Buy" : side === "SELL" ? "Sell" : "";
-  const peNice = pe.includes("OPEN")
-    ? "Open"
-    : pe.includes("CLOSE")
-      ? "Close"
-      : "";
-  if (!sideNice || !peNice) return "";
-  return sideNice + " to " + peNice;
-}
-
-/** Signed quantity: BUY positive, SELL negative. */
-function buildSignedQuantity(sideRaw, qtyAbs) {
-  const side = String(sideRaw || "")
-    .trim()
-    .toUpperCase();
-  const q = Number(qtyAbs || 0);
-  if (!q) return "";
-  return side === "SELL" ? -Math.abs(q) : Math.abs(q);
-}
-
-/** Extract ticker from Symbol. For options like "MRVL 11/19/2021 70.00 C", ticker = "MRVL". */
-function extractTickerFromSymbol(symbolRaw) {
-  const s = String(symbolRaw || "").trim();
-  if (!s) return "";
-  return s.split(/\s+/)[0].trim();
-}
-
-/** Extract Call/Put from Symbol or Description. Returns "C" or "P" or "". */
-function extractCallPut(symbolRaw, desc) {
-  const s = String(symbolRaw || "").trim();
-  const m = s.match(/\b([CP])\b\s*$/i);
-  if (m) return m[1].toUpperCase();
-
-  const d = String(desc || "").toUpperCase();
-  if (d.includes(" CALL ") || d.includes(" CALL")) return "C";
-  if (d.includes(" PUT ") || d.includes(" PUT")) return "P";
-  return "";
-}
-
+// =========================================================================
+// TRADE FIELD BUILDERS
+//   Moved to src/phase-2-mapping/MapTradeFields.js
+//   isTradeBySidePosEffect
+//   buildTradeAction
+//   buildSignedQuantity
+//   extractTickerFromSymbol
+//   extractCallPut
+//   Call sites in mapSchwabImportByHeadersV3() are unchanged.
+// =========================================================================
 // =========================================================================
 // CORP ACTION MAP + SYMBOL-CHANGE HELPERS
 //   Resolve tickers for TDA-era corporate-action rows and for "Symbol Change
