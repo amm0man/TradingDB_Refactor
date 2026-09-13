@@ -69,10 +69,6 @@ function resolveLiveSpreadGroupId(
 
   let candidates = candidatesFor(strat);
 
-  // RAD / close Strategy Type often does not match the open
-  // (SHORT IC opens, CCS-forward-filled RADs). If the exact
-  // strategy bucket is empty, use any range on this account +
-  // ticker + expiration whose strike window contains this strike.
   if (candidates.length === 0) {
     const prefixAcct = String(acct || "").toUpperCase();
     const prefixTkr = String(ticker || "").toUpperCase();
@@ -924,11 +920,37 @@ function populateStagingWithBlockLogicV3() {
         .toString()
         .toUpperCase();
 
-      let tradeType = (row[colMap["trade type"] - 1] || "")
+            let tradeType = (row[colMap["trade type"] - 1] || "")
         .toString()
         .toUpperCase()
         .trim();
       if (!tradeType && ticker) tradeType = "OPTION";
+
+      // A row with expiration + strike + call/put is an option even when
+      // Helper labeled Trade Type SPREAD and Spread Group ID is still blank.
+      // Otherwise the grouping key falls through to Account|Ticker (stock)
+      // and a put-assignment RAD decrements the new share lot (100 → 99).
+      const expForType = row[colMap["option expiration"] - 1];
+      const strikeForType = Number(row[colMap["option strike"] - 1]) || 0;
+      const cpForType = (row[colMap["call/put"] - 1] || "")
+        .toString()
+        .toUpperCase()
+        .trim();
+      const hasOptionIdentity =
+        !spreadId &&
+        ticker &&
+        strikeForType > 0 &&
+        !!expForType &&
+        (cpForType === "C" ||
+          cpForType === "P" ||
+          cpForType === "CALL" ||
+          cpForType === "PUT");
+      if (hasOptionIdentity && tradeType !== "OPTION") {
+        tradeType = "OPTION";
+        if (colMap["trade type"] !== undefined) {
+          row[colMap["trade type"] - 1] = "OPTION";
+        }
+      }
 
       // === LIVE SPREAD GROUP ID RESOLUTION FOR CLOSING/RAD LEGS ================
       // WHY: Sub-pass C intentionally left closing leg Spread Group IDs blank.
