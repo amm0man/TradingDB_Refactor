@@ -67,6 +67,18 @@ function resolveLiveSpreadGroupId(
     return rangeGroups.filter((g) => strike >= g.min && strike <= g.max);
   }
 
+  function pickStartedGroup(list) {
+    for (const g of list) {
+      const b = blocks[`${acct}|${g.groupId}`] || {};
+      if (b.unit > 0) return g.groupId;
+    }
+    for (const g of list) {
+      const b = blocks[`${acct}|${g.groupId}`] || {};
+      if (b.positionId || b.openTs) return g.groupId;
+    }
+    return "";
+  }
+
   let candidates = candidatesFor(strat);
 
   if (candidates.length === 0) {
@@ -89,14 +101,33 @@ function resolveLiveSpreadGroupId(
   }
 
   if (candidates.length === 0) return "";
-  if (candidates.length === 1) return candidates[0].groupId;
+  return pickStartedGroup(candidates);
+}
 
-  for (const g of candidates) {
-    const blockKey = `${acct}|${g.groupId}`;
-    if ((blocks[blockKey] || {}).unit > 0) return g.groupId;
+function hasContainingSpreadWindow(
+  acct,
+  ticker,
+  expStr,
+  strike,
+  spreadRangeMap,
+) {
+  const prefixAcct = String(acct || "").toUpperCase();
+  const prefixTkr = String(ticker || "").toUpperCase();
+  const prefixExp = String(expStr || "");
+  const keys = Object.keys(spreadRangeMap || {});
+  for (let i = 0; i < keys.length; i++) {
+    const parts = String(keys[i]).split("|");
+    if (parts.length < 4) continue;
+    if (String(parts[0]).toUpperCase() !== prefixAcct) continue;
+    if (String(parts[1]).toUpperCase() !== prefixTkr) continue;
+    if (String(parts[2]) !== prefixExp) continue;
+    const groups = spreadRangeMap[keys[i]] || [];
+    for (let j = 0; j < groups.length; j++) {
+      const g = groups[j];
+      if (strike >= g.min && strike <= g.max) return true;
+    }
   }
-
-  return candidates[0].groupId;
+  return false;
 }
 
 // ==================== UPDATED BLOCK LOGIC V3 - FIXED ====================
@@ -983,7 +1014,15 @@ function populateStagingWithBlockLogicV3() {
           if (resolved) {
             row[colMap["spread group id"] - 1] = resolved;
             spreadId = resolved; // local var — used immediately in the grouping key below
-          } else {
+                    } else if (
+            !hasContainingSpreadWindow(
+              acct,
+              ticker,
+              expStr_,
+              strike_,
+              spreadRangeMap,
+            )
+          ) {
             ctxMissingSpreadGroup++;
             importIssuesAdd(
               ctx,
