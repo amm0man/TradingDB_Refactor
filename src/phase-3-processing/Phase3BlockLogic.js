@@ -951,7 +951,7 @@ function populateStagingWithBlockLogicV3() {
         .toString()
         .toUpperCase();
 
-            let tradeType = (row[colMap["trade type"] - 1] || "")
+      let tradeType = (row[colMap["trade type"] - 1] || "")
         .toString()
         .toUpperCase()
         .trim();
@@ -1014,7 +1014,7 @@ function populateStagingWithBlockLogicV3() {
           if (resolved) {
             row[colMap["spread group id"] - 1] = resolved;
             spreadId = resolved; // local var — used immediately in the grouping key below
-                    } else if (
+          } else if (
             !hasContainingSpreadWindow(
               acct,
               ticker,
@@ -1238,6 +1238,59 @@ function populateStagingWithBlockLogicV3() {
       const prevUnit = Number(blocks[key].unit || 0);
       const prevRunningQty = Number(blocks[key].runningQty || 0);
 
+      // Leftover To Close after this option key already flattened.
+      // TOS often keeps Pos Effect = TO CLOSE on the extra fill that
+      // flips a long into a short (CVNA 2024-03-25). Treating that row
+      // as another close drives Running Position Quantity through -1
+      // to -2 on the cover and never Block-Closes TG002.
+      // Broker Action is left unchanged. Orphan first-closes stay
+      // negative because block is still 1.
+      let leftoverCloseAsOpen = false;
+      let blockStrategyType = strategyType;
+      if (
+        tradeType === "OPTION" &&
+        !spreadId &&
+        action.includes("TO CLOSE") &&
+        action !== "RAD" &&
+        prevUnit === 0 &&
+        Number(blocks[key].block || 1) > 1
+      ) {
+        leftoverCloseAsOpen = true;
+        delta = 1;
+
+        const cpLeft = (row[colMap["call/put"] - 1] || "")
+          .toString()
+          .toUpperCase()
+          .replace("CALL", "C")
+          .replace("PUT", "P");
+        if (action.includes("SELL TO CLOSE")) {
+          blockStrategyType = cpLeft === "P" ? "SHORT PUT" : "SHORT CALL";
+        } else if (action.includes("BUY TO CLOSE")) {
+          blockStrategyType = cpLeft === "P" ? "LONG PUT" : "LONG CALL";
+        }
+
+        if (colMap["strategy type"] !== undefined) {
+          const stratWrite =
+            blockStrategyType === "SHORT PUT"
+              ? "SHORT PUT"
+              : blockStrategyType === "LONG PUT"
+                ? "LONG PUT"
+                : blockStrategyType === "LONG CALL"
+                  ? "LONG CALL"
+                  : "SHORT CALL";
+          row[colMap["strategy type"] - 1] = stratWrite;
+        }
+
+        importIssuesAdd(
+          ctx,
+          "INFO",
+          dataStartRow + i,
+          "Action",
+          actionRaw,
+          "Leftover To Close after flat option block treated as opening the other side. Broker Action left unchanged.",
+        );
+      }
+
       blocks[key].unit += delta * qty;
       blocks[key].runningQty += delta * qty;
 
@@ -1274,7 +1327,7 @@ function populateStagingWithBlockLogicV3() {
       // Build unique Position ID when the block starts.
       let posId = blocks[key].positionId;
       if (blkStart && ticker && tradeType !== "") {
-        const stratAbbrevPos = getStratAbbrev(strategyType || "");
+        const stratAbbrevPos = getStratAbbrev(blockStrategyType || "");
         const tgSuffixPos = `TG${String(curBlock).padStart(3, "0")}`;
 
         if (spreadId) {
@@ -1301,7 +1354,7 @@ function populateStagingWithBlockLogicV3() {
         }
 
         blocks[key].positionId = posId;
-        blocks[key].strategyType = strategyType;
+        blocks[key].strategyType = blockStrategyType;
       }
       row[colMap["position id"] - 1] = posId;
 
@@ -1313,7 +1366,7 @@ function populateStagingWithBlockLogicV3() {
           : "";
       const isOption = tradeType === "OPTION";
       const stratAbbrev = getStratAbbrev(
-        strategyType || blocks[key].strategyType,
+        blockStrategyType || blocks[key].strategyType,
       );
       const tgSuffix = `TG${String(curBlock).padStart(3, "0")}`;
 
@@ -1339,7 +1392,7 @@ function populateStagingWithBlockLogicV3() {
       if (action.includes("BUY TO")) sign = -1;
       blocks[key].pnl +=
         sign * Number(row[colMap["entry price"] - 1]) * qty * multiplier;
-      if (action.includes("OPEN")) {
+      if (action.includes("OPEN") || leftoverCloseAsOpen) {
         blocks[key].entryCost += Math.abs(
           sign * Number(row[colMap["entry price"] - 1]) * qty * multiplier,
         );
