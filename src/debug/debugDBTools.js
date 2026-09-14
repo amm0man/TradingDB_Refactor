@@ -391,3 +391,276 @@ function classifyNegRunningQtyFirstCross() {
       " negative rows. See sheet NEG_RUNNING_QTY Classify."
   );
 }
+
+/**
+ * classifyNegSpxByPositionId
+ *
+ * WHY:
+ *   classifyNegRunningQtyFirstCross groups by Account|Ticker, so all DT SPX
+ *   negatives collapse into one family (30 rows, MinRunningQty -300).
+ *   SPX is many expirations and strikes. This helper splits those Staging
+ *   rows by Position ID when present, else by exp + strike + C/P.
+ *
+ * SCOPE:
+ *   Account = DT, Ticker = SPX, Running Position Quantity < 0.
+ *   Does not change Staging. Does not change leftover-close.
+ *
+ * OUTPUT:
+ *   Sheet "NEG_SPX By Position ID" — one row per option key
+ *   Sheet "NEG_SPX Rows" — every negative DT SPX Staging row
+ *
+ * HOW TO RUN:
+ *   Apps Script editor → select classifyNegSpxByPositionId → Run.
+ */
+function classifyNegSpxByPositionId() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const staging = ss.getSheetByName("Staging");
+  if (!staging) {
+    uiAlertSafe("Staging sheet not found.");
+    return;
+  }
+
+  const all = staging.getDataRange().getValues();
+  if (all.length < 4) {
+    uiAlertSafe("Staging has no data rows.");
+    return;
+  }
+
+  const headers = all[0].map(function (h) {
+    return String(h || "")
+      .trim()
+      .toLowerCase();
+  });
+  function idx(name) {
+    const i = headers.indexOf(name);
+    if (i < 0) throw new Error("Missing Staging header: " + name);
+    return i;
+  }
+
+  const iAcct = idx("account");
+  const iTicker = idx("ticker");
+  const iDate = idx("trade date");
+  const iTime = headers.indexOf("trade time");
+  const iAction = idx("action");
+  const iType = idx("trade type");
+  const iSpread = idx("spread group id");
+  const iTg = headers.indexOf("trade group id");
+  const iPos = headers.indexOf("position id");
+  const iStrat = headers.indexOf("strategy type");
+  const iQty = idx("quantity");
+  const iRun = idx("running position quantity");
+  const iStart = headers.indexOf("block start flag");
+  const iBlk = headers.indexOf("block number");
+  const iClose = headers.indexOf("block close flag/p&l");
+  const iExp = headers.indexOf("option expiration");
+  const iStrike = headers.indexOf("option strike");
+  const iCp = headers.indexOf("call/put");
+
+  function kindFromFirstAction(action) {
+    const a = String(action || "")
+      .toUpperCase()
+      .trim();
+    if (a === "RAD") return "RAD_NO_LIVE";
+    if (a.indexOf("TO CLOSE") !== -1) return "ORPHAN_OR_EXTRA_CLOSE";
+    if (a.indexOf("TO OPEN") !== -1) return "OPEN_THEN_NEGATIVE";
+    return "OTHER";
+  }
+
+  const groups = {};
+  const detail = [];
+
+  for (let r = 3; r < all.length; r++) {
+    const row = all[r];
+    const acct = String(row[iAcct] || "")
+      .trim()
+      .toUpperCase();
+    const ticker = String(row[iTicker] || "")
+      .trim()
+      .toUpperCase();
+    const runQty = Number(row[iRun]);
+    if (acct !== "DT" || ticker !== "SPX" || !(runQty < 0)) continue;
+
+    const posId = iPos >= 0 ? String(row[iPos] || "").trim() : "";
+    const exp = iExp >= 0 ? row[iExp] : "";
+    const strike = iStrike >= 0 ? row[iStrike] : "";
+    const cp = iCp >= 0
+      ? String(row[iCp] || "")
+          .trim()
+          .toUpperCase()
+          .replace("CALL", "C")
+          .replace("PUT", "P")
+      : "";
+    const identity =
+      "DT|SPX|" +
+      String(exp || "") +
+      "|" +
+      String(strike || "") +
+      "|" +
+      cp;
+    const groupKey = posId || identity;
+
+    if (!groups[groupKey]) {
+      groups[groupKey] = {
+        positionId: posId,
+        identity: identity,
+        firstRow: r + 1,
+        firstDate: row[iDate],
+        firstAction: String(row[iAction] || ""),
+        firstTradeType: String(row[iType] || ""),
+        firstSpread: String(row[iSpread] || ""),
+        firstTg: iTg >= 0 ? String(row[iTg] || "") : "",
+        firstStrat: iStrat >= 0 ? String(row[iStrat] || "") : "",
+        firstQty: row[iQty],
+        firstRunQty: runQty,
+        firstExp: exp,
+        firstStrike: strike,
+        firstCp: cp,
+        firstBlkStart: iStart >= 0 ? row[iStart] : "",
+        firstBlkNum: iBlk >= 0 ? row[iBlk] : "",
+        firstBlkClose: iClose >= 0 ? row[iClose] : "",
+        minRunQty: runQty,
+        lastRow: r + 1,
+        lastDate: row[iDate],
+        lastAction: String(row[iAction] || ""),
+        lastRunQty: runQty,
+        negCount: 0,
+        kind: kindFromFirstAction(row[iAction]),
+      };
+    }
+
+    const g = groups[groupKey];
+    g.negCount++;
+    if (runQty < g.minRunQty) g.minRunQty = runQty;
+    g.lastRow = r + 1;
+    g.lastDate = row[iDate];
+    g.lastAction = String(row[iAction] || "");
+    g.lastRunQty = runQty;
+
+    detail.push([
+      r + 1,
+      row[iDate],
+      iTime >= 0 ? row[iTime] : "",
+      String(row[iAction] || ""),
+      String(row[iType] || ""),
+      String(row[iSpread] || ""),
+      iTg >= 0 ? String(row[iTg] || "") : "",
+      posId,
+      iStrat >= 0 ? String(row[iStrat] || "") : "",
+      row[iQty],
+      runQty,
+      iStart >= 0 ? row[iStart] : "",
+      iBlk >= 0 ? row[iBlk] : "",
+      iClose >= 0 ? row[iClose] : "",
+      exp,
+      strike,
+      cp,
+      identity,
+      kindFromFirstAction(row[iAction]),
+    ]);
+  }
+
+  const sumHeaders = [
+    "Kind",
+    "Position ID",
+    "Option Identity",
+    "NegRowCount",
+    "FirstStagingRow",
+    "FirstDate",
+    "FirstAction",
+    "FirstTradeType",
+    "FirstSpreadGroupId",
+    "FirstTradeGroupId",
+    "FirstStrategyType",
+    "FirstQty",
+    "FirstRunningQty",
+    "FirstExp",
+    "FirstStrike",
+    "FirstCP",
+    "FirstBlkStart",
+    "FirstBlkNum",
+    "FirstBlkClose",
+    "MinRunningQty",
+    "LastStagingRow",
+    "LastDate",
+    "LastAction",
+    "LastRunningQty",
+  ];
+
+  const sumBody = Object.keys(groups)
+    .sort(function (a, b) {
+      return groups[a].firstRow - groups[b].firstRow;
+    })
+    .map(function (k) {
+      const g = groups[k];
+      return [
+        g.kind,
+        g.positionId,
+        g.identity,
+        g.negCount,
+        g.firstRow,
+        g.firstDate,
+        g.firstAction,
+        g.firstTradeType,
+        g.firstSpread,
+        g.firstTg,
+        g.firstStrat,
+        g.firstQty,
+        g.firstRunQty,
+        g.firstExp,
+        g.firstStrike,
+        g.firstCp,
+        g.firstBlkStart,
+        g.firstBlkNum,
+        g.firstBlkClose,
+        g.minRunQty,
+        g.lastRow,
+        g.lastDate,
+        g.lastAction,
+        g.lastRunQty,
+      ];
+    });
+
+  const detHeaders = [
+    "StagingRow",
+    "Trade Date",
+    "Trade Time",
+    "Action",
+    "Trade Type",
+    "Spread Group ID",
+    "Trade Group ID",
+    "Position ID",
+    "Strategy Type",
+    "Quantity",
+    "Running Position Quantity",
+    "Block Start Flag",
+    "Block Number",
+    "Block Close Flag/P&L",
+    "Option Expiration",
+    "Option Strike",
+    "Call/Put",
+    "Option Identity",
+    "Kind",
+  ];
+
+  function writeSheet(name, headerRow, bodyRows) {
+    let sh = ss.getSheetByName(name);
+    if (!sh) sh = ss.insertSheet(name);
+    sh.clear();
+    sh.getRange(1, 1, 1, headerRow.length).setValues([headerRow]);
+    if (bodyRows.length) {
+      sh.getRange(2, 1, bodyRows.length, headerRow.length).setValues(bodyRows);
+    }
+    sh.setFrozenRows(1);
+  }
+
+  writeSheet("NEG_SPX By Position ID", sumHeaders, sumBody);
+  writeSheet("NEG_SPX Rows", detHeaders, detail);
+
+  uiAlertSafe(
+    "DT SPX negatives: " +
+      detail.length +
+      " rows across " +
+      sumBody.length +
+      " Position ID / option keys. See NEG_SPX By Position ID and NEG_SPX Rows.",
+  );
+}

@@ -494,8 +494,35 @@ function populateStagingWithBlockLogicV3() {
       const acctB = (b[colMap["account"] - 1] || "").toString().toUpperCase();
       if (acctA !== acctB) return acctA.localeCompare(acctB);
 
-      const tsA = a[tsIdx] instanceof Date ? a[tsIdx].getTime() : 0;
-      const tsB = b[tsIdx] instanceof Date ? b[tsIdx].getTime() : 0;
+      // Same calendar day first. Then non-RAD before RAD.
+      // WHY: TOS often stamps Opt Expired at 00:xx on expiration day
+      // (DT SPX 9/7/2023 RAD 00:39 vs IC opens 13:20). Live-resolve
+      // only attaches if the spread block already started. Displayed
+      // Trade Time Stamp is not changed.
+      const tsADate = a[tsIdx] instanceof Date ? a[tsIdx] : null;
+      const tsBDate = b[tsIdx] instanceof Date ? b[tsIdx] : null;
+      const dayA = tsADate
+        ? Utilities.formatDate(tsADate, tz, "yyyy-MM-dd")
+        : "";
+      const dayB = tsBDate
+        ? Utilities.formatDate(tsBDate, tz, "yyyy-MM-dd")
+        : "";
+      if (dayA !== dayB) return dayA.localeCompare(dayB);
+
+      const actA = (a[colMap["action"] - 1] || "")
+        .toString()
+        .trim()
+        .toUpperCase();
+      const actB = (b[colMap["action"] - 1] || "")
+        .toString()
+        .trim()
+        .toUpperCase();
+      const radRankA = actA === "RAD" ? 1 : 0;
+      const radRankB = actB === "RAD" ? 1 : 0;
+      if (radRankA !== radRankB) return radRankA - radRankB;
+
+      const tsA = tsADate ? tsADate.getTime() : 0;
+      const tsB = tsBDate ? tsBDate.getTime() : 0;
       if (tsA !== tsB) return tsA - tsB;
 
       // Tie-breaker: lower strike first within the same timestamp.
@@ -503,6 +530,7 @@ function populateStagingWithBlockLogicV3() {
       const strikeB = Number(b[colMap["option strike"] - 1]) || 0;
       return strikeA - strikeB;
     });
+
     // ─────────────────────────────────────────────────────────────────────────
     // Step 3: Assign Spread Group ID — THREE sub-passes.
     // ─────────────────────────────────────────────────────────────────────────
