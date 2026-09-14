@@ -450,11 +450,34 @@ function mapSchwabImportByHeadersV3() {
       //
       // RAD merger / dividend rows stay non-trade because they have blank
       // Side and Pos Effect, so isTradeBySidePosEffect() returns false.
-      // Account Actions still vetoes (fees, journals, ACH).
+      // Account Actions still vetoes (fees, journals, ACH) EXCEPT security
+      // transfer receipts: Transfer In/Out have no Side/Pos Effect, but they
+      // are real share lots. parseSecurityTransferReceiptV3() reads qty from
+      // the description so Phase 3 can open/close the stock block at $0.
       // DRIP no longer needs a special case; those rows already have
       // Side=BUY and Pos Effect=TO OPEN.
+      const transferTrade = parseSecurityTransferReceiptV3(
+        accountActionTag,
+        desc,
+      );
+      if (
+        (accountActionTag === "Transfer of Security or Option In" ||
+          accountActionTag === "Transfer of Security or Option Out") &&
+        !transferTrade
+      ) {
+        mappingIssuesAdd(
+          ctx,
+          "WARN",
+          importRowNum,
+          "Quantity",
+          desc.substring(0, 80),
+          "Security transfer tag is present but qty could not be parsed from Description. Row stays a non-trade RAD.",
+        );
+      }
       const isTrade =
-        !accountActionTag && isTradeBySidePosEffect(sideRaw, posEffectRaw);
+        (!accountActionTag && isTradeBySidePosEffect(sideRaw, posEffectRaw)) ||
+        !!transferTrade;
+
       // =========================
       // Fill "Schwab Mapping" scope columns
       // =========================
@@ -515,6 +538,10 @@ function mapSchwabImportByHeadersV3() {
       // Steps 2-5 only run for corp action rows where Symbol was blank.
       // CORP_ACTIONS_NO_TICKER types skip the fallback entirely (no underlying security).
       let ticker = extractTickerFromSymbol(symbolRaw);
+
+      if (!ticker && transferTrade && transferTrade.ticker) {
+        ticker = transferTrade.ticker;
+      }
 
       // AFTER — also fires for any DOI row or untagged RAD non-trade row with a blank ticker.
       //
@@ -657,8 +684,14 @@ function mapSchwabImportByHeadersV3() {
         tradeRowCount++;
 
         // ---- Trade row ----
-        const qty = Math.abs(parseNumber(qtyRaw) || 0);
-        const entryPrice = parseNumber(priceRaw);
+        const sideForTrade = transferTrade ? transferTrade.side : sideRaw;
+        const posForTrade = transferTrade
+          ? transferTrade.posEffect
+          : posEffectRaw;
+        const qty = transferTrade
+          ? transferTrade.qty
+          : Math.abs(parseNumber(qtyRaw) || 0);
+        const entryPrice = transferTrade ? 0 : parseNumber(priceRaw);
 
         mapped[col(mappingHeaderMap, "Quantity")] = qty || "";
         mapped[col(mappingHeaderMap, "Entry Price")] = entryPrice;
@@ -671,16 +704,16 @@ function mapSchwabImportByHeadersV3() {
 
         // Signed Quantity: BUY => +qty, SELL => -qty
         mapped[col(mappingHeaderMap, "Signed Quantity")] = buildSignedQuantity(
-          sideRaw,
+          sideForTrade,
           qty,
         );
-
         // Total Cost (leg-level): signedQty * entryPrice * multiplier
         // Equities/ETFs options use 100 multiplier; stocks use 1.
         const signedQty = Number(
           mapped[col(mappingHeaderMap, "Signed Quantity")],
         );
         const multiplier =
+          transferTrade ||
           String(spreadRaw || "")
             .trim()
             .toUpperCase() === "STOCK"
@@ -695,18 +728,18 @@ function mapSchwabImportByHeadersV3() {
 
         // Action: combine Side + Pos Effect (trades only)
         mapped[col(mappingHeaderMap, "Action")] = buildTradeAction(
-          sideRaw,
-          posEffectRaw,
+          sideForTrade,
+          posForTrade,
         );
 
         // Opening/Closing Date based on Pos Effect (date-only)
         if (ts instanceof Date && !isNaN(ts)) {
           const dOnly = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
-          const pe = posEffectRaw.trim().toUpperCase();
+          const pe = String(posForTrade || "").trim().toUpperCase();
           if (pe.includes("OPEN"))
-            mapped[col(mappingHeaderMap, "Opening Date")] = dOnly;
+         mapped[col(mappingHeaderMap, "Opening Date")] = dOnly;
           if (pe.includes("CLOSE"))
-            mapped[col(mappingHeaderMap, "Closing Date")] = dOnly;
+         mapped[col(mappingHeaderMap, "Closing Date")] = dOnly;
         }
 
         // Option fields (if present)
@@ -1003,6 +1036,10 @@ function mapSchwabImportByHeadersV3() {
         importAmount,
       );
 
+        if (transferTrade) {
+        mapped[col(mappingHeaderMap, "Strategy Type")] = "Long Stock";
+      }
+
       // Save output row + metadata
       outItems.push({
         row: mapped,
@@ -1279,4 +1316,4 @@ function normalizeExpiration(expRaw) {
 //   findFirstKeywordTag
 //   getCorpActionsKeywordRulesV3
 //   Call sites in mapSchwabImportByHeadersV3() are unchanged.
-// =====================================================
+// ====================================================

@@ -81,6 +81,52 @@ function getAccountActionsKeywordRulesV3() {
 }
 
 /**
+ * Security transfer receipts (shares or options moving in/out of the account).
+ *
+ * WHY: "Transfer of Security or Option In 3.0 AAPL" is tagged as an Account
+ * Action. That tag used to veto isTrade, so Mapping left Quantity blank and
+ * Action = RAD. Phase 3 then did RAD && ticker with qty 0 (no-op), and a
+ * later sell went negative (LT AAPL 2022-12-29 sold 6, running -3).
+ *
+ * This helper does NOT change the Account Actions label. It only says
+ * "this tagged row is also a $0 stock lot that Phase 3 must book."
+ *
+ * Description shape we have seen:
+ *   TRANSFER OF SECURITY OR OPTION IN 3.0 AAPL
+ *   transfer of security or option out 2.0 MSFT
+ *
+ * Returns null when the tag is not a security transfer, or qty cannot be read.
+ */
+function parseSecurityTransferReceiptV3(accountActionTag, descRaw) {
+  const tag = String(accountActionTag || "").trim();
+  const isIn = tag === "Transfer of Security or Option In";
+  const isOut = tag === "Transfer of Security or Option Out";
+  if (!isIn && !isOut) return null;
+
+  const desc = String(descRaw || "");
+  const m = desc.match(
+    /transfer of security or option\s+(in|out)\s+(-?\d+(?:\.\d+)?)(?:\s+([A-Za-z][A-Za-z0-9./]{0,9}))?/i,
+  );
+  if (!m) return null;
+
+  const qty = Math.abs(parseFloat(m[2]));
+  if (!isFinite(qty) || qty <= 0) return null;
+
+  let tickerHint = String(m[3] || "")
+    .replace(/\.[A-Za-z]+$/, "")
+    .toUpperCase();
+  if (tickerHint === "CALL" || tickerHint === "PUT") tickerHint = "";
+
+  return {
+    direction: isIn ? "IN" : "OUT",
+    side: isIn ? "BUY" : "SELL",
+    posEffect: isIn ? "TO OPEN" : "TO CLOSE",
+    qty: qty,
+    ticker: tickerHint,
+  };
+}
+
+/**
  * Derive Account Actions tag:
  * - Directional journal transfers based on "...750" / "...937" and frm/to phrasing
  * - Internal transfers ("internal transfer of cash", "third party") based on Account + Amount sign
