@@ -242,3 +242,152 @@ function auditOpenPositions() {
     `Sorted by Account → Days Open (oldest first).`
   );
 }
+
+// Phase 3 debug to classify negative Running Position Quantity in Staging
+function classifyNegRunningQtyFirstCross() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const staging = ss.getSheetByName("Staging");
+  if (!staging) {
+    uiAlertSafe("Staging sheet not found.");
+    return;
+  }
+
+  const all = staging.getDataRange().getValues();
+  if (all.length < 4) {
+    uiAlertSafe("Staging has no data rows.");
+    return;
+  }
+
+  const headers = all[0].map(function (h) {
+    return String(h || "").trim().toLowerCase();
+  });
+  function idx(name) {
+    const i = headers.indexOf(name);
+    if (i < 0) throw new Error("Missing Staging header: " + name);
+    return i;
+  }
+
+  const iAcct = idx("account");
+  const iTicker = idx("ticker");
+  const iDate = idx("trade date");
+  const iAction = idx("action");
+  const iType = idx("trade type");
+  const iSpread = idx("spread group id");
+  const iQty = idx("quantity");
+  const iRun = idx("running position quantity");
+  const iPos = headers.indexOf("position id");
+  const iExp = headers.indexOf("option expiration");
+  const iStrike = headers.indexOf("option strike");
+  const iCp = headers.indexOf("call/put");
+
+  const DATA_START = 4;
+  const groups = {};
+
+  for (let r = 3; r < all.length; r++) {
+    const row = all[r];
+    const ticker = String(row[iTicker] || "").trim().toUpperCase();
+    const runQty = Number(row[iRun]);
+    if (!ticker || !(runQty < 0)) continue;
+
+    const acct = String(row[iAcct] || "").trim().toUpperCase();
+    const key = acct + "|" + ticker;
+    if (!groups[key]) {
+      groups[key] = {
+        account: acct,
+        ticker: ticker,
+        firstRow: r + 1,
+        firstDate: row[iDate],
+        firstAction: String(row[iAction] || ""),
+        firstTradeType: String(row[iType] || ""),
+        firstSpread: String(row[iSpread] || ""),
+        firstQty: row[iQty],
+        firstRunQty: runQty,
+        firstPosId: iPos >= 0 ? String(row[iPos] || "") : "",
+        firstExp: iExp >= 0 ? row[iExp] : "",
+        firstStrike: iStrike >= 0 ? row[iStrike] : "",
+        firstCp: iCp >= 0 ? String(row[iCp] || "") : "",
+        minRunQty: runQty,
+        lastRow: r + 1,
+        lastDate: row[iDate],
+        lastAction: String(row[iAction] || ""),
+        lastRunQty: runQty,
+        negCount: 0
+      };
+    }
+    const g = groups[key];
+    g.negCount++;
+    if (runQty < g.minRunQty) g.minRunQty = runQty;
+    g.lastRow = r + 1;
+    g.lastDate = row[iDate];
+    g.lastAction = String(row[iAction] || "");
+    g.lastRunQty = runQty;
+  }
+
+  const outHeaders = [
+    "Account",
+    "Ticker",
+    "NegRowCount",
+    "FirstStagingRow",
+    "FirstDate",
+    "FirstAction",
+    "FirstTradeType",
+    "FirstSpreadGroupId",
+    "FirstQty",
+    "FirstRunningQty",
+    "FirstPositionId",
+    "FirstExp",
+    "FirstStrike",
+    "FirstCP",
+    "MinRunningQty",
+    "LastStagingRow",
+    "LastDate",
+    "LastAction",
+    "LastRunningQty"
+  ];
+
+  const body = Object.keys(groups)
+    .sort(function (a, b) {
+      return groups[b].negCount - groups[a].negCount;
+    })
+    .map(function (k) {
+      const g = groups[k];
+      return [
+        g.account,
+        g.ticker,
+        g.negCount,
+        g.firstRow,
+        g.firstDate,
+        g.firstAction,
+        g.firstTradeType,
+        g.firstSpread,
+        g.firstQty,
+        g.firstRunQty,
+        g.firstPosId,
+        g.firstExp,
+        g.firstStrike,
+        g.firstCp,
+        g.minRunQty,
+        g.lastRow,
+        g.lastDate,
+        g.lastAction,
+        g.lastRunQty
+      ];
+    });
+
+  let out = ss.getSheetByName("NEG_RUNNING_QTY Classify");
+  if (!out) out = ss.insertSheet("NEG_RUNNING_QTY Classify");
+  out.clear();
+  out.getRange(1, 1, 1, outHeaders.length).setValues([outHeaders]);
+  if (body.length) {
+    out.getRange(2, 1, body.length, outHeaders.length).setValues(body);
+  }
+  out.setFrozenRows(1);
+
+  uiAlertSafe(
+    "NEG_RUNNING_QTY first-cross: " +
+      body.length +
+      " Account|Ticker families from " +
+      body.reduce(function (n, r) { return n + Number(r[2] || 0); }, 0) +
+      " negative rows. See sheet NEG_RUNNING_QTY Classify."
+  );
+}
