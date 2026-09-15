@@ -1319,12 +1319,48 @@ function populateStagingWithBlockLogicV3() {
         );
       }
 
+      // Family C — extra close/RAD on a Spread Group ID after that
+      // group already flattened (block > 1, unit 0).
+      // WHY: unsigned spread units can hit 0 after extra closes of
+      // one leg (DT SOXL PDS 155-160, LT SPY CCS 392-393). The next
+      // TO CLOSE was starting TG002 and driving Running Position
+      // Quantity negative. That is fake inventory for Master.
+      // WHAT: keep the broker Action, do not change units, keep the
+      // row on the last closed TG. Do NOT treat this as opening the
+      // other side (that is Family B, single-option only).
+      // Orphan first-closes stay untouched because block is still 1.
+      let extraCloseAfterFlat = false;
+      if (
+        spreadId &&
+        !leftoverCloseAsOpen &&
+        prevUnit === 0 &&
+        Number(blocks[key].block || 1) > 1 &&
+        delta < 0 &&
+        (action.includes("TO CLOSE") || action === "RAD")
+      ) {
+        extraCloseAfterFlat = true;
+        delta = 0;
+        importIssuesAdd(
+          ctx,
+          "INFO",
+          dataStartRow + i,
+          "Action",
+          actionRaw,
+          "EXTRA_CLOSE_AFTER_FLAT — spread already flat; row kept on last closed TG; running qty not reduced below 0.",
+        );
+      }
+
       blocks[key].unit += delta * qty;
       blocks[key].runningQty += delta * qty;
 
       const newUnit = Number(blocks[key].unit || 0);
       const newRunningQty = Number(blocks[key].runningQty || 0);
       const curBlock = blocks[key].block;
+      // Extra closes belong on the group that just flattened, not TG00N+1.
+      let tgBlock = curBlock;
+      if (extraCloseAfterFlat && Number(curBlock) > 1) {
+        tgBlock = curBlock - 1;
+      }
 
       let blkStart = 0;
       let blkClose = 0;
@@ -1356,7 +1392,7 @@ function populateStagingWithBlockLogicV3() {
       let posId = blocks[key].positionId;
       if (blkStart && ticker && tradeType !== "") {
         const stratAbbrevPos = getStratAbbrev(blockStrategyType || "");
-        const tgSuffixPos = `TG${String(curBlock).padStart(3, "0")}`;
+        const tgSuffixPos = `TG${String(tgBlock).padStart(3, "0")}`;
 
         if (spreadId) {
           posId = `${spreadId}-${tgSuffixPos}`;
@@ -1396,7 +1432,7 @@ function populateStagingWithBlockLogicV3() {
       const stratAbbrev = getStratAbbrev(
         blockStrategyType || blocks[key].strategyType,
       );
-      const tgSuffix = `TG${String(curBlock).padStart(3, "0")}`;
+      const tgSuffix = `TG${String(tgBlock).padStart(3, "0")}`;
 
       const tradeGroupId = spreadId
         ? `${spreadId}-${tgSuffix}`
@@ -1406,7 +1442,7 @@ function populateStagingWithBlockLogicV3() {
       blocks[key].tradeGroupId = tradeGroupId;
 
       row[colMap["block start flag"] - 1] = blkStart;
-      row[colMap["block number"] - 1] = curBlock;
+      row[colMap["block number"] - 1] = tgBlock;
       row[colMap["block close flag/p&l"] - 1] = blkClose;
       row[colMap["running position quantity"] - 1] = blocks[key].runningQty;
 
@@ -1442,6 +1478,8 @@ function populateStagingWithBlockLogicV3() {
       } else if (blkStart) {
         row[colMap["trade status"] - 1] = "Open";
         blocks[key].openTs = row[tsIdx];
+      } else if (extraCloseAfterFlat) {
+        row[colMap["trade status"] - 1] = "Closed";
       }
     } // end main row loop
 
