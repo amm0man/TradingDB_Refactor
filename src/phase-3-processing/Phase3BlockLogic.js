@@ -1350,6 +1350,34 @@ function populateStagingWithBlockLogicV3() {
         );
       }
 
+      // Family D — RAD with no live units on this block key.
+      // WHY: RAD always started as delta = -1. If the option/spread
+      // was already flat (or the RAD landed on the wrong ticker,
+      // e.g. SQQQ1), Running Position Quantity went negative.
+      // Live RADs are unchanged: prevUnit > 0 still uses delta = -1.
+      // WHAT: keep the RAD row, do not change units, stay on the
+      // last closed TG when one exists. Identity bugs (SQQQ1) are
+      // a later parse fix; this only stops fake inventory.
+      let unmatchedRad = false;
+      if (
+        action === "RAD" &&
+        !leftoverCloseAsOpen &&
+        !extraCloseAfterFlat &&
+        prevUnit === 0 &&
+        delta < 0
+      ) {
+        unmatchedRad = true;
+        delta = 0;
+        importIssuesAdd(
+          ctx,
+          "INFO",
+          dataStartRow + i,
+          "Action",
+          actionRaw,
+          "RAD_NO_LIVE — no open units on this key; RAD row kept; running qty not reduced below 0.",
+        );
+      }
+
       blocks[key].unit += delta * qty;
       blocks[key].runningQty += delta * qty;
 
@@ -1358,7 +1386,7 @@ function populateStagingWithBlockLogicV3() {
       const curBlock = blocks[key].block;
       // Extra closes belong on the group that just flattened, not TG00N+1.
       let tgBlock = curBlock;
-      if (extraCloseAfterFlat && Number(curBlock) > 1) {
+      if ((extraCloseAfterFlat || unmatchedRad) && Number(curBlock) > 1) {
         tgBlock = curBlock - 1;
       }
 
@@ -1478,7 +1506,7 @@ function populateStagingWithBlockLogicV3() {
       } else if (blkStart) {
         row[colMap["trade status"] - 1] = "Open";
         blocks[key].openTs = row[tsIdx];
-      } else if (extraCloseAfterFlat) {
+      } else if (extraCloseAfterFlat || unmatchedRad) {
         row[colMap["trade status"] - 1] = "Closed";
       }
     } // end main row loop
