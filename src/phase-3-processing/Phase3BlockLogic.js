@@ -1378,6 +1378,39 @@ function populateStagingWithBlockLogicV3() {
         );
       }
 
+      // Family A — orphan first close on a single-option key.
+      // WHY: BTC/STC with no matching open (DT SPX R3284 4505C,
+      // R3285 4510C). There is no lot to attach to. Leftover-close
+      // as open would invent a short. Leaving delta = -1 writes
+      // fake inventory onto Master.
+      // WHAT: keep the broker Action, do not change units.
+      // Family B is the same shape with block > 1 (already handled).
+      // Spreads are Family C. RAD is Family D.
+      let orphanClose = false;
+      if (
+        tradeType === "OPTION" &&
+        !spreadId &&
+        !leftoverCloseAsOpen &&
+        !extraCloseAfterFlat &&
+        !unmatchedRad &&
+        action.includes("TO CLOSE") &&
+        action !== "RAD" &&
+        prevUnit === 0 &&
+        Number(blocks[key].block || 1) <= 1 &&
+        delta < 0
+      ) {
+        orphanClose = true;
+        delta = 0;
+        importIssuesAdd(
+          ctx,
+          "INFO",
+          dataStartRow + i,
+          "Action",
+          actionRaw,
+          "ORPHAN_CLOSE — no open exists on this option key; row kept; running qty not reduced below 0.",
+        );
+      }
+
       blocks[key].unit += delta * qty;
       blocks[key].runningQty += delta * qty;
 
@@ -1506,7 +1539,7 @@ function populateStagingWithBlockLogicV3() {
       } else if (blkStart) {
         row[colMap["trade status"] - 1] = "Open";
         blocks[key].openTs = row[tsIdx];
-      } else if (extraCloseAfterFlat || unmatchedRad) {
+      } else if (extraCloseAfterFlat || unmatchedRad || orphanClose) {
         row[colMap["trade status"] - 1] = "Closed";
       }
     } // end main row loop
