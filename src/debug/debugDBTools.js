@@ -245,6 +245,7 @@ function auditOpenPositions() {
 
 // Phase 3 debug to classify negative Running Position Quantity in Staging
 function classifyNegRunningQtyFirstCross() {
+  const EPS = 1e-8;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const staging = ss.getSheetByName("Staging");
   if (!staging) {
@@ -276,18 +277,44 @@ function classifyNegRunningQtyFirstCross() {
   const iQty = idx("quantity");
   const iRun = idx("running position quantity");
   const iPos = headers.indexOf("position id");
+  const iTg = headers.indexOf("trade group id");
   const iExp = headers.indexOf("option expiration");
   const iStrike = headers.indexOf("option strike");
   const iCp = headers.indexOf("call/put");
+  const iBlk = headers.indexOf("block number");
 
-  const DATA_START = 4;
+  function familyOf(g) {
+    const action = String(g.firstAction || "").toUpperCase();
+    const type = String(g.firstTradeType || "").toUpperCase();
+    const spread = String(g.firstSpread || "").trim();
+    const ticker = String(g.ticker || "");
+    const block = Number(g.firstBlock || 1);
+
+    if (type === "STOCK") return { family: "E", fix: "CRUMB_OR_FLOAT — skip if abs(run)<1e-8; else clamp stock" };
+    if (action === "RAD") {
+      if (/^\w+\d+$/.test(ticker)) {
+        return { family: "D-ID", fix: "FIX_IDENTITY — ticker looks like OCC root+year (SQQQ1). Parse, then rebuild." };
+      }
+      return { family: "D", fix: "CLAMP_RAD — unmatched RAD, keep row, running stays 0" };
+    }
+    if (spread && (action.indexOf("TO CLOSE") !== -1)) {
+      return { family: "C", fix: "CLAMP_EXTRA_SPREAD_CLOSE — stay on last closed TG, do not open TG002 short" };
+    }
+    if (!spread && action.indexOf("TO CLOSE") !== -1 && block <= 1) {
+      return { family: "A", fix: "CLAMP_ORPHAN_CLOSE — no open exists, do not invent a short" };
+    }
+    if (!spread && action.indexOf("TO CLOSE") !== -1 && block > 1) {
+      return { family: "B", fix: "DONE leftover-close-as-open (single option flip)" };
+    }
+    return { family: "?", fix: "SPOT_CHECK" };
+  }
+
   const groups = {};
-
   for (let r = 3; r < all.length; r++) {
     const row = all[r];
     const ticker = String(row[iTicker] || "").trim().toUpperCase();
     const runQty = Number(row[iRun]);
-    if (!ticker || !(runQty < 0)) continue;
+    if (!ticker || !(runQty < -EPS)) continue;
 
     const acct = String(row[iAcct] || "").trim().toUpperCase();
     const key = acct + "|" + ticker;
@@ -303,9 +330,11 @@ function classifyNegRunningQtyFirstCross() {
         firstQty: row[iQty],
         firstRunQty: runQty,
         firstPosId: iPos >= 0 ? String(row[iPos] || "") : "",
+        firstTg: iTg >= 0 ? String(row[iTg] || "") : "",
         firstExp: iExp >= 0 ? row[iExp] : "",
         firstStrike: iStrike >= 0 ? row[iStrike] : "",
         firstCp: iCp >= 0 ? String(row[iCp] || "") : "",
+        firstBlock: iBlk >= 0 ? row[iBlk] : "",
         minRunQty: runQty,
         lastRow: r + 1,
         lastDate: row[iDate],
@@ -324,6 +353,8 @@ function classifyNegRunningQtyFirstCross() {
   }
 
   const outHeaders = [
+    "Family",
+    "Fix",
     "Account",
     "Ticker",
     "NegRowCount",
@@ -332,9 +363,11 @@ function classifyNegRunningQtyFirstCross() {
     "FirstAction",
     "FirstTradeType",
     "FirstSpreadGroupId",
+    "FirstTradeGroupId",
     "FirstQty",
     "FirstRunningQty",
     "FirstPositionId",
+    "FirstBlock",
     "FirstExp",
     "FirstStrike",
     "FirstCP",
@@ -351,7 +384,10 @@ function classifyNegRunningQtyFirstCross() {
     })
     .map(function (k) {
       const g = groups[k];
+      const fam = familyOf(g);
       return [
+        fam.family,
+        fam.fix,
         g.account,
         g.ticker,
         g.negCount,
@@ -360,9 +396,11 @@ function classifyNegRunningQtyFirstCross() {
         g.firstAction,
         g.firstTradeType,
         g.firstSpread,
+        g.firstTg,
         g.firstQty,
         g.firstRunQty,
         g.firstPosId,
+        g.firstBlock,
         g.firstExp,
         g.firstStrike,
         g.firstCp,
@@ -387,8 +425,8 @@ function classifyNegRunningQtyFirstCross() {
     "NEG_RUNNING_QTY first-cross: " +
       body.length +
       " Account|Ticker families from " +
-      body.reduce(function (n, r) { return n + Number(r[2] || 0); }, 0) +
-      " negative rows. See sheet NEG_RUNNING_QTY Classify."
+      body.reduce(function (n, r) { return n + Number(r[4] || 0); }, 0) +
+      " negative rows (crumbs abs<1e-8 skipped). See sheet NEG_RUNNING_QTY Classify."
   );
 }
 
