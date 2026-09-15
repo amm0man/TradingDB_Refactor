@@ -652,6 +652,36 @@ function copyMappingToImportByHeaders() {
                 : "";
             const tkr = descTkrIsCusip && preMappedTkr ? preMappedTkr : descTkr;
 
+            // Cash-settled index options never deliver shares. Schwab still emits
+            // BOT/SOLD UPON stock legs (SPX 9/1 PCS, 9/20 butterfly, 9/29 PCS).
+            // Booking them on key DT|SPX makes SELL TO CLOSE print −100/−300
+            // then the BUY flats the lot. Skip inventory; keep the option RAD.
+            // Equity assignment (PLTR, etc.) must still flow through.
+            const CASH_SETTLED_INDEX_TICKERS = {
+              SPX: true,
+              SPXW: true,
+              XSP: true,
+              NDX: true,
+              NDXP: true,
+              RUT: true,
+              RUTW: true,
+              VIX: true,
+            };
+            if (CASH_SETTLED_INDEX_TICKERS[tkr]) {
+              skippedCount++;
+              importIssuesAdd(
+                ctx,
+                "SKIP",
+                r + 2,
+                "Description",
+                upperDesc.substring(0, 80),
+                "Cash-settled BOT/SOLD UPON stock leg skipped for ticker " +
+                  tkr +
+                  ". Index options do not deliver shares. Option RAD/removal row is the close.",
+              );
+              continue;
+            }
+
             // Entry price: derive from TotalCost ÷ Qty (= strike on assignments).
             // Schwab stores debits negative for BOT rows; Math.abs() normalises both.
             const cost = Math.abs(totalCostVal) || 0;
