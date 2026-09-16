@@ -104,6 +104,9 @@ function auditPipelineIntegrity() {
   const posHasStart = new Set();
   const posHasClose = new Set();
   const posFirstRow = {};
+  // Account|Ticker books that already have a STOCK (or -ST) Block Start.
+  // Used by CHECK 4 so add-on lots are not treated as missing opens.
+  const stockBookHasStart = new Set();
 
   try {
     // ════════════════════════════════════════════════════════════════════════
@@ -215,13 +218,24 @@ function auditPipelineIntegrity() {
 
     // ════════════════════════════════════════════════════════════════════════
     // CHECK 4 — Position ID exists but no Block Start Flag in the block
+    // WHY: Block Start Flag means “this ticker book went from 0 to open.”
+    //      Assignment / extra stock buys get their own Position ID (lot
+    //      label, often parentTgId-ST) while Running Position Quantity stays
+    //      on the ticker book. Those add-on IDs correctly have Start = 0.
+    //      Only flag when this Account+Ticker stock book never started.
     // ════════════════════════════════════════════════════════════════════════
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const posId = cvStr(row, "position id");
       const ticker = cvStr(row, "ticker");
       if (!posId || !ticker) continue;
-      if (cvNum(row, "block start flag") === 1) posHasStart.add(posId);
+      if (cvNum(row, "block start flag") === 1) {
+        posHasStart.add(posId);
+        const tt = cvUpper(row, "trade type");
+        if (tt === "STOCK" || posId.toUpperCase().endsWith("-ST")) {
+          stockBookHasStart.add(cvUpper(row, "account") + "|" + ticker);
+        }
+      }
       if (cvNum(row, "block close flag/p&l") === 1) posHasClose.add(posId);
       if (posFirstRow[posId] === undefined) posFirstRow[posId] = i;
     }
@@ -232,23 +246,40 @@ function auditPipelineIntegrity() {
       const posId = cvStr(row, "position id");
       const ticker = cvStr(row, "ticker");
       if (!posId || !ticker || reportedNoStart.has(posId)) continue;
-      if (!posHasStart.has(posId)) {
+      if (posHasStart.has(posId)) continue;
+
+      const first = data[posFirstRow[posId]];
+      const firstType = cvUpper(first, "trade type");
+      const firstAcct = cvUpper(first, "account");
+      const firstTicker = cvStr(first, "ticker");
+      const bookKey = firstAcct + "|" + firstTicker;
+      const isStockLot =
+        firstType === "STOCK" || posId.toUpperCase().endsWith("-ST");
+      const runQty = cvNum(first, "running position quantity");
+      const qty = cvNum(first, "quantity");
+      const isAddOnLot =
+        isStockLot && (stockBookHasStart.has(bookKey) || runQty > qty);
+
+      if (isAddOnLot) {
         reportedNoStart.add(posId);
-        flag(
-          "POSID_NO_BLOCK_START",
-          "ERROR",
-          posFirstRow[posId],
-          cv(data[posFirstRow[posId]], "account"),
-          ticker,
-          cv(data[posFirstRow[posId]], "trade date"),
-          cv(data[posFirstRow[posId]], "action"),
-          "Position ID",
-          posId,
-          "Position ID found on rows but no Block Start Flag = 1 exists. " +
-            "The opening trade for this position is missing from the dataset. " +
-            "P&L, Trade Duration, and Running Quantity for this block are unreliable.",
-        );
+        continue;
       }
+
+      reportedNoStart.add(posId);
+      flag(
+        "POSID_NO_BLOCK_START",
+        "ERROR",
+        posFirstRow[posId],
+        cv(first, "account"),
+        ticker,
+        cv(first, "trade date"),
+        cv(first, "action"),
+        "Position ID",
+        posId,
+        "Position ID found on rows but no Block Start Flag = 1 exists. " +
+          "The opening trade for this position is missing from the dataset. " +
+          "P&L, Trade Duration, and Running Quantity for this block are unreliable.",
+      );
     }
 
     // ════════════════════════════════════════════════════════════════════════
