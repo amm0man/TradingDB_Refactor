@@ -660,6 +660,47 @@ function mapSchwabImportByHeadersV3() {
           }
         }
       }
+      /** Remove if SQQQ1 resolves right 9/15/26 1850
+      // Format B leftover: option/RAD ticker SQQQ1 → SQQQ.
+      // Phase 1 parseDotted used to glue the year pad digit onto the root.
+      // Only strip trailing digits when this row is actually an option or RAD.
+      if (ticker && /^[A-Z]+\d+$/.test(String(ticker).trim().toUpperCase())) {
+        const tkrU = String(ticker).trim().toUpperCase();
+        const cpTok = extractCallPut(symbolRaw, desc);
+        const actU = String(importAction || "")
+          .trim()
+          .toUpperCase();
+        const looksOption =
+          !!cpTok ||
+          actU === "RAD" ||
+          String(symbolRaw || "")
+            .trim()
+            .charAt(0) === ".";
+        if (looksOption) {
+          ticker = tkrU.replace(/\d+$/, "");
+        }
+      }
+      */
+      // RAD / option descriptions often start with the word CALL or PUT.
+      // Prefer the dotted OCC root in the description (.SQQQ1241220C14 → SQQQ).
+      {
+        const descU = String(desc || "");
+        const occRoot = descU.match(/\.([A-Z]{1,10})(\d{6,7})[CP]\d/i);
+        const tkrU = String(ticker || "")
+          .trim()
+          .toUpperCase();
+        const actU2 = String(importAction || "")
+          .trim()
+          .toUpperCase();
+        const tickerIsJunk =
+          !tkrU ||
+          tkrU === "CALL" ||
+          tkrU === "PUT" ||
+          /^[A-Z]+\d+$/.test(tkrU);
+        if (occRoot && (actU2 === "RAD" || tickerIsJunk)) {
+          ticker = occRoot[1].toUpperCase();
+        }
+      }
 
       mapped[col(mappingHeaderMap, "Ticker")] = ticker;
 
@@ -735,11 +776,13 @@ function mapSchwabImportByHeadersV3() {
         // Opening/Closing Date based on Pos Effect (date-only)
         if (ts instanceof Date && !isNaN(ts)) {
           const dOnly = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
-          const pe = String(posForTrade || "").trim().toUpperCase();
+          const pe = String(posForTrade || "")
+            .trim()
+            .toUpperCase();
           if (pe.includes("OPEN"))
-         mapped[col(mappingHeaderMap, "Opening Date")] = dOnly;
+            mapped[col(mappingHeaderMap, "Opening Date")] = dOnly;
           if (pe.includes("CLOSE"))
-         mapped[col(mappingHeaderMap, "Closing Date")] = dOnly;
+            mapped[col(mappingHeaderMap, "Closing Date")] = dOnly;
         }
 
         // Option fields (if present)
@@ -1036,7 +1079,7 @@ function mapSchwabImportByHeadersV3() {
         importAmount,
       );
 
-        if (transferTrade) {
+      if (transferTrade) {
         mapped[col(mappingHeaderMap, "Strategy Type")] = "Long Stock";
       }
 

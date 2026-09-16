@@ -81,27 +81,39 @@ function createSymbolHelpers(opts) {
 
     // Pattern: .UNDERLYING + YYMMDD + C/P + STRIKE
     // Example: .QQQ230309C305
-    const m = s.match(
-      /^\.(\w{1,10})(\d{2})(\d{2})(\d{2})([CP])(\d+(?:\.\d+)?)$/,
-    );
+    //
+    // Root MUST be letters only. \w ate the year digit on Format B
+    // symbols: .SQQQ1241220C14 became underlying SQQQ1 + 2024-12-20.
+    // 7-digit runs are root-padding + YYMMDD (drop the extra leading digit).
+    const m = s.match(/^\.([A-Z]{1,10})(\d{6,7})([CP])(\d+(?:\.\d+)?)$/);
     if (!m) return null;
 
     const underlying = m[1].toUpperCase();
-    const yy = parseInt(m[2], 10);
-    const mm = parseInt(m[3], 10);
-    const dd = parseInt(m[4], 10);
-    const cp = m[5].toUpperCase();
-    const strikeNum = parseFloat(m[6]);
+    const dateDigits = m[2];
+    const cp = m[3].toUpperCase();
+    const strikeNum = parseFloat(m[4]);
 
-    if (
-      !underlying ||
-      !isFinite(yy) ||
-      !isFinite(mm) ||
-      !isFinite(dd) ||
-      !isFinite(strikeNum)
-    )
-      return null;
-    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    function yymmddParts(six) {
+      const yy = parseInt(six.slice(0, 2), 10);
+      const mm = parseInt(six.slice(2, 4), 10);
+      const dd = parseInt(six.slice(4, 6), 10);
+      if (!isFinite(yy) || mm < 1 || mm > 12 || dd < 1 || dd > 31) {
+        return null;
+      }
+      return { yy: yy, mm: mm, dd: dd };
+    }
+
+    let parts = null;
+    if (dateDigits.length === 6) {
+      parts = yymmddParts(dateDigits);
+    } else if (dateDigits.length === 7) {
+      parts = yymmddParts(dateDigits.slice(1));
+    }
+    if (!parts || !isFinite(strikeNum)) return null;
+
+    const yy = parts.yy;
+    const mm = parts.mm;
+    const dd = parts.dd;
 
     const expDate = new Date(2000 + yy, mm - 1, dd, 0, 0, 0, 0);
     const optType = cp === "C" ? "CALL" : cp === "P" ? "PUT" : "";

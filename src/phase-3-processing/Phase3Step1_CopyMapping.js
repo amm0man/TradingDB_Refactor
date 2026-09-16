@@ -397,12 +397,16 @@ function copyMappingToImportByHeaders() {
           // Examples: "... -6.0 .SPY241231P580"  |  "... 2.0 .UUUU241220P6"
           if (!parsed) {
             const occMatch = descStr.match(
-              /Removed due to (?:Expiration|Assignment).*?\s+([-+]?\d+\.?\d*)\s+\.([A-Z0-9]+?)(\d{6})([CP])(\d+\.?\d*)\s*$/i,
+              /Removed due to (?:Expiration|Assignment).*?\s+([-+]?\d+\.?\d*)\s+\.([A-Z]+?)(\d{6,7})([CP])(\d+\.?\d*)\s*$/i,
             );
             if (occMatch) {
               const qtyStr = occMatch[1];
               const tkr = occMatch[2].toUpperCase();
-              const yymmdd = occMatch[3];
+              // 7-digit run is Format B padding + YYMMDD
+              // (.SQQQ1241220C14 → SQQQ + 241220, not SQQQ1 + 241220).
+              const rawDate = occMatch[3];
+              const yymmdd =
+                rawDate.length === 7 ? rawDate.substring(1) : rawDate;
               const cpStr = occMatch[4].toUpperCase();
               const strikeStr = occMatch[5];
 
@@ -462,12 +466,14 @@ function copyMappingToImportByHeaders() {
           // Example: "PUT ENERGY FUELS INC $6 EXP 08/16/24: ASG: 1.0 .UUUU240816P6"
           if (!parsed) {
             const occBareMatch = descStr.match(
-              /([-+]?\d+\.?\d*)\s+\.([A-Z0-9]+?)(\d{6})([CP])(\d+\.?\d*)\s*$/i,
+              /([-+]?\d+\.?\d*)\s+\.([A-Z]+?)(\d{6,7})([CP])(\d+\.?\d*)\s*$/i,
             );
             if (occBareMatch) {
               const qtyStr = occBareMatch[1];
               const tkr = occBareMatch[2].toUpperCase();
-              const yymmdd = occBareMatch[3];
+              const rawDate = occBareMatch[3];
+              const yymmdd =
+                rawDate.length === 7 ? rawDate.substring(1) : rawDate;
               const cpStr = occBareMatch[4].toUpperCase();
               const strikeStr = occBareMatch[5];
 
