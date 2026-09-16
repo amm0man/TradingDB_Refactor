@@ -1414,6 +1414,20 @@ function populateStagingWithBlockLogicV3() {
       blocks[key].unit += delta * qty;
       blocks[key].runningQty += delta * qty;
 
+      // STOCK float crumb: DRIP + whole-share sell + MKT stub can leave
+      // running qty at ±1e-12 instead of 0. The sheet displays 0, CHECK 1
+      // still fires, and Block Close Flag never flips (exact === 0).
+      // Do not clamp OPTION/SPREAD — those are whole contracts.
+      // Do not snap real leftover shares (0.37 is not a crumb).
+      if (tradeType === "STOCK") {
+        if (Math.abs(Number(blocks[key].unit) || 0) < 1e-8) {
+          blocks[key].unit = 0;
+        }
+        if (Math.abs(Number(blocks[key].runningQty) || 0) < 1e-8) {
+          blocks[key].runningQty = 0;
+        }
+      }
+
       const newUnit = Number(blocks[key].unit || 0);
       const newRunningQty = Number(blocks[key].runningQty || 0);
       const curBlock = blocks[key].block;
