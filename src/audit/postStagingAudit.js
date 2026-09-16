@@ -171,7 +171,13 @@ function auditPipelineIntegrity() {
     //      A real cloned row matches Quantity + Price + option identity too.
     //      Even then, two identical-size fills can share a second, so leftover
     //      matches are INFO (look-at-this), not data-integrity failures.
+    //
+    // 2026-09-16: WRITE_DUPLICATE_TIMESTAMP_INFO is false so Audit Results
+    // is not flooded with ~1796 valid same-second fills. The scan is kept
+    // so this can be turned back on without rewriting the key. Do not
+    // promote these back to ERROR.
     // ════════════════════════════════════════════════════════════════════════
+    const WRITE_DUPLICATE_TIMESTAMP_INFO = false;
     const tsMap = {};
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -191,28 +197,30 @@ function auditPipelineIntegrity() {
       if (!tsMap[key]) tsMap[key] = [];
       tsMap[key].push(i);
     }
-    for (const [key, rows] of Object.entries(tsMap)) {
-      if (rows.length > 1) {
-        rows.forEach((i) => {
-          const row = data[i];
-          const parts = key.split("|");
-          flag(
-            "DUPLICATE_TIMESTAMP",
-            "INFO",
-            i,
-            cv(row, "account"),
-            cv(row, "ticker"),
-            cv(row, "trade date"),
-            cv(row, "action"),
-            "Trade Time Stamp",
-            parts[1],
-            "Same-second executions with the same qty/price/contract (" +
-              rows.length +
-              " rows). Valid broker fills unless Schwab Mapping " +
-              "is also doubled. Staging rows: " +
-              rows.map((r) => r + DATA_START_ROW).join(", "),
-          );
-        });
+    if (WRITE_DUPLICATE_TIMESTAMP_INFO) {
+      for (const [key, rows] of Object.entries(tsMap)) {
+        if (rows.length > 1) {
+          rows.forEach((i) => {
+            const row = data[i];
+            const parts = key.split("|");
+            flag(
+              "DUPLICATE_TIMESTAMP",
+              "INFO",
+              i,
+              cv(row, "account"),
+              cv(row, "ticker"),
+              cv(row, "trade date"),
+              cv(row, "action"),
+              "Trade Time Stamp",
+              parts[1],
+              "Same-second executions with the same qty/price/contract (" +
+                rows.length +
+                " rows). Valid broker fills unless Schwab Mapping " +
+                "is also doubled. Staging rows: " +
+                rows.map((r) => r + DATA_START_ROW).join(", "),
+            );
+          });
+        }
       }
     }
 
