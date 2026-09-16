@@ -460,20 +460,57 @@ function auditPipelineIntegrity() {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // CHECK 9 — RAD Assignment without a matching same-date BUY TO OPEN Stock leg
+    // CHECK 9 — RAD Assignment without a matching same-date stock leg
+    // WHY: Put assignment delivers long shares (BUY TO OPEN).
+    //      Call assignment delivers short shares (SELL TO OPEN) or sells
+    //      a covered long (SELL TO CLOSE). The old check only looked for BTO,
+    //      so every short-call assignment WARNed even when the stock row exists.
+    //      Cash-settled index tickers never deliver shares — skip those.
+    //      Keep CASH_SETTLED_INDEX_TICKERS in sync with
+    //      copyMappingToImportByHeaders in Phase3Step1_CopyMapping.js.
     // ════════════════════════════════════════════════════════════════════════
-    const stockOpenByDateKey = new Set();
+    const CASH_SETTLED_INDEX_TICKERS = {
+      SPX: true,
+      SPXW: true,
+      XSP: true,
+      NDX: true,
+      NDXP: true,
+      RUT: true,
+      RUTW: true,
+      VIX: true,
+    };
+
+    const stockBtoByDateKey = new Set();
+    const stockStoByDateKey = new Set();
+    const stockStcByDateKey = new Set();
+    const exerciseByDateKey = new Set();
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const action = cvUpper(row, "action");
       const tradeType = cvUpper(row, "trade type");
       const ticker = cvStr(row, "ticker");
-      if (action !== "BUY TO OPEN" || tradeType !== "STOCK" || !ticker)
-        continue;
+      if (tradeType !== "STOCK" || !ticker) continue;
       const acct = cvUpper(row, "account");
       const td = cv(row, "trade date");
       const tdStr = td instanceof Date ? td.toDateString() : td.toString();
-      stockOpenByDateKey.add(`${acct}|${ticker}|${tdStr}`);
+      const key = `${acct}|${ticker}|${tdStr}`;
+      if (action === "BUY TO OPEN") stockBtoByDateKey.add(key);
+      if (action === "SELL TO OPEN") stockStoByDateKey.add(key);
+      if (action === "SELL TO CLOSE") stockStcByDateKey.add(key);
+    }
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      if (cvUpper(row, "action") !== "RAD") continue;
+      const ticker = cvStr(row, "ticker");
+      if (!ticker) continue;
+      const acctAct = cvUpper(row, "account actions");
+      if (acctAct.indexOf("EXERCISE") === -1) continue;
+      const td = cv(row, "trade date");
+      const tdStr = td instanceof Date ? td.toDateString() : td.toString();
+      exerciseByDateKey.add(
+        cvUpper(row, "account") + "|" + ticker + "|" + tdStr,
+      );
     }
 
     for (let i = 0; i < data.length; i++) {
@@ -481,19 +518,39 @@ function auditPipelineIntegrity() {
       const action = cvUpper(row, "action");
       const ticker = cvStr(row, "ticker");
       if (action !== "RAD" || !ticker) continue;
-
+      if (CASH_SETTLED_INDEX_TICKERS[ticker.toUpperCase()]) continue;
+      // Opt Expired shorts have the same C/P + signed-qty shape as
+      // assignment. Only warn when Account Actions says this RAD
+      // actually assigned or exercised. UNG assignment rows say
+      // "Option Removal - Assignment". The 43 leftovers said "Opt Expired".
+      const acctAct = cvUpper(row, "account actions");
+      if (
+        acctAct.indexOf("ASSIGN") === -1 &&
+        acctAct.indexOf("EXERCISE") === -1
+      ) {
+        continue;
+      }
       const cp = cvUpper(row, "call/put");
       const signedQty = cvNum(row, "signed quantity");
-      const isAssignment =
-        (cp === "P" && signedQty > 0) || (cp === "C" && signedQty < 0);
-      if (!isAssignment) continue;
+      const isPutAssign = cp === "P" && signedQty > 0;
+      const isCallAssign = cp === "C" && signedQty < 0;
+      if (!isPutAssign && !isCallAssign) continue;
 
       const acct = cvUpper(row, "account");
       const td = cv(row, "trade date");
       const tdStr = td instanceof Date ? td.toDateString() : td.toString();
       const key = `${acct}|${ticker}|${tdStr}`;
 
-      if (!stockOpenByDateKey.has(key)) {
+      const hasLeg = isPutAssign
+        ? stockBtoByDateKey.has(key)
+        : stockStoByDateKey.has(key) || stockStcByDateKey.has(key);
+
+      // Spread expiration: short stamped Assignment, long stamped Exercised
+      // the same day (LT SPY 402/403 PCS 6/11/2022). Broker nets the shares;
+      // no STOCK row is expected.
+      if (!hasLeg && exerciseByDateKey.has(key)) continue;
+
+      if (!hasLeg) {
         flag(
           "ASSIGNMENT_NO_STOCK_LEG",
           "WARN",
@@ -502,17 +559,18 @@ function auditPipelineIntegrity() {
           ticker,
           td,
           action,
-          "BOT UPON Stock Leg",
+          "Assignment Stock Leg",
           "(missing)",
           cp +
             " assignment at $" +
             cvStr(row, "option strike") +
-            " found but no BUY TO OPEN Stock row exists for " +
+            " found but no same-date STOCK " +
+            (isPutAssign ? "BUY TO OPEN" : "SELL TO OPEN / SELL TO CLOSE") +
+            " exists for " +
             ticker +
             " on " +
             tdStr +
-            ". The assigned shares have no cost basis in this dataset. " +
-            "Check if the BOT UPON row failed to parse in copyMappingToImportByHeaders.",
+            ".",
         );
       }
     }
