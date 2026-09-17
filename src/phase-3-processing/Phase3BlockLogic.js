@@ -1672,6 +1672,24 @@ function populateStagingWithBlockLogicV3() {
       .getRange(1, 1, outputGrid.length, outputGrid[0].length)
       .setValues(outputGrid);
 
+    // Display pad: Sheets default can show 16:5. Force 16:05 on Staging.
+    if (outputGrid.length >= 4) {
+      const stHeaders = outputGrid[0].map((h) =>
+        (h || "").toString().trim().toLowerCase(),
+      );
+      const stTs = stHeaders.indexOf("trade time stamp") + 1;
+      const stTm = stHeaders.indexOf("trade time") + 1;
+      const nData = outputGrid.length - 3;
+      if (stTs > 0) {
+        stagingSheet
+          .getRange(4, stTs, nData, 1)
+          .setNumberFormat("M/d/yyyy HH:mm");
+      }
+      if (stTm > 0) {
+        stagingSheet.getRange(4, stTm, nData, 1).setNumberFormat("HH:mm");
+      }
+    }
+
     checkMissingDateTimeAndAlert(
       stagingSheet,
       4,

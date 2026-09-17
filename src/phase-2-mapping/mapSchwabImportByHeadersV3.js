@@ -1286,13 +1286,36 @@ function normalizeImportDateOnly(dateValue) {
 
 /** Normalize Time-only field to HHmm string (e.g., "0741"). */
 function normalizeImportTimeOnly(timeValue) {
+  if (timeValue instanceof Date && !isNaN(timeValue)) {
+    return Utilities.formatDate(timeValue, Session.getScriptTimeZone(), "HHmm");
+  }
   const s = String(timeValue || "").trim();
   if (!s) return "";
+
+  // Colon form first so "16:5" → "1605", not digit-strip "165" → "0165".
+  if (s.indexOf(":") !== -1) {
+    const parts = s.split(":");
+    const hh = String(Number(parts[0]) || 0).padStart(2, "0");
+    const mm = String(Number(parts[1]) || 0).padStart(2, "0");
+    return (hh + mm).slice(-4);
+  }
+
   const cleaned = s.replace(/\D/g, "");
   if (!cleaned) return "";
+  if (cleaned.length === 3) {
+    const asHmm = Number(cleaned.substring(0, 2));
+    const asMin1 = Number(cleaned.substring(2).padStart(2, "0"));
+    if (asHmm >= 0 && asHmm <= 23 && asMin1 >= 0 && asMin1 <= 9) {
+      return String(asHmm).padStart(2, "0") + String(asMin1).padStart(2, "0");
+    }
+    const asHm = Number(cleaned.substring(0, 1));
+    const asMin2 = Number(cleaned.substring(1, 3));
+    if (asHm >= 0 && asHm <= 9 && asMin2 >= 0 && asMin2 <= 59) {
+      return String(asHm).padStart(2, "0") + String(asMin2).padStart(2, "0");
+    }
+  }
   return cleaned.padStart(4, "0").slice(-4);
 }
-
 // =========================================================================
 // TRADE FIELD BUILDERS
 //   Moved to src/phase-2-mapping/MapTradeFields.js

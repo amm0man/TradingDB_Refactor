@@ -64,29 +64,41 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
         let hours, minutes, seconds;
 
         if (timeStr.includes(":")) {
-          // Format "HH:mm" or "HH:mm:ss"
-          const parts = timeStr.split(":").map(Number);
-          [hours, minutes, seconds = 0] = parts;
-        } else if (timeStr.length >= 4) {
-          // Format "HHmm" or "HHmmss" — no colon (Schwab Mapping output format)
-          hours = Number(timeStr.substring(0, 2));
-          minutes = Number(timeStr.substring(2, 4));
-          seconds = timeStr.length >= 6 ? Number(timeStr.substring(4, 6)) : 0;
+          // "16:5", "16:05", "9:5:00" — pad each piece so minutes 0-9 stay :05
+          const parts = timeStr.split(":");
+          hours = Number(parts[0]);
+          minutes = Number(String(parts[1] || "0").padStart(2, "0"));
+          seconds = Number(String(parts[2] || "0").padStart(2, "0"));
         } else {
-          hours = NaN;
-          minutes = NaN;
-          seconds = 0;
-        }
-
-        if (!isNaN(hours) && !isNaN(minutes)) {
-          fullTimestamp = new Date(
-            baseDate.getFullYear(),
-            baseDate.getMonth(),
-            baseDate.getDate(),
-            hours,
-            minutes,
-            seconds || 0,
-          );
+          const digits = timeStr.replace(/\D/g, "");
+          if (digits.length === 3) {
+            // "165" came from unpadded 16:5 → 16:05, not 01:65
+            const asHmm = Number(digits.substring(0, 2));
+            const asMin1 = Number(digits.substring(2).padStart(2, "0"));
+            const asHm = Number(digits.substring(0, 1));
+            const asMin2 = Number(digits.substring(1, 3));
+            if (asHmm >= 0 && asHmm <= 23 && asMin1 >= 0 && asMin1 <= 9) {
+              hours = asHmm;
+              minutes = asMin1;
+              seconds = 0;
+            } else if (asHm >= 0 && asHm <= 9 && asMin2 >= 0 && asMin2 <= 59) {
+              hours = asHm;
+              minutes = asMin2;
+              seconds = 0;
+            } else {
+              hours = NaN;
+              minutes = NaN;
+              seconds = 0;
+            }
+          } else if (digits.length >= 4) {
+            hours = Number(digits.substring(0, 2));
+            minutes = Number(digits.substring(2, 4));
+            seconds = digits.length >= 6 ? Number(digits.substring(4, 6)) : 0;
+          } else {
+            hours = NaN;
+            minutes = NaN;
+            seconds = 0;
+          }
         }
       }
     }
