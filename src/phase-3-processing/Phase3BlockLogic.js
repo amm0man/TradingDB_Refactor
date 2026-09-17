@@ -146,7 +146,7 @@ function hasContainingSpreadWindow(
 //   Position IDs / Spread Group IDs, handles symbol changes, exercises,
 //   assignments, and writes the final result to the "Staging" sheet.
 // =========================================================================
-function populateStagingWithBlockLogicV3() {
+function populateStagingWithBlockLogicV3(seedBlocks) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const helperSheet = ss.getSheetByName("Helper");
   const stagingSheet = ss.getSheetByName("Staging");
@@ -450,6 +450,12 @@ function populateStagingWithBlockLogicV3() {
   // ── PRIORITY 1: try/catch/finally so Issues log ALWAYS gets flushed ────────
   try {
     const helperData = helperSheet.getDataRange().getValues();
+    const tBlock = pipelineTimingNow();
+    pipelineTimingLog(
+      "populateStagingWithBlockLogicV3 read Helper",
+      tBlock,
+      "rowsInclHeader=" + helperData.length,
+    );
     if (helperData.length < 4) {
       uiAlertSafe("No data in Helper to process.");
       return;
@@ -530,6 +536,8 @@ function populateStagingWithBlockLogicV3() {
       const strikeB = Number(b[colMap["option strike"] - 1]) || 0;
       return strikeA - strikeB;
     });
+
+    pipelineTimingLog("populateStagingWithBlockLogicV3 sort", tBlock);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Step 3: Assign Spread Group ID — THREE sub-passes.
@@ -679,7 +687,11 @@ function populateStagingWithBlockLogicV3() {
     // ─────────────────────────────────────────────────────────────────────────
     // Step 4: Main loop — assign all block fields and calculate P&L on close.
     // ─────────────────────────────────────────────────────────────────────────
-    let blocks = {};
+    // Phase 4 hook: incremental runner may pass seedBlocksFromMaster().
+    // Menu + refreshAllScripts call this with no argument, so blocks stays {}.
+    // Full-rebuild results must not change.
+    let blocks = seedBlocks && typeof seedBlocks === "object" ? seedBlocks : {};
+    const tStep4 = pipelineTimingNow();
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -1090,17 +1102,7 @@ function populateStagingWithBlockLogicV3() {
         key = `${acct}|${ticker}`;
       }
 
-      if (!blocks[key])
-        blocks[key] = {
-          unit: 0,
-          block: 1,
-          runningQty: 0,
-          pnl: 0,
-          entryCost: 0,
-          openTs: null,
-          positionId: "",
-          strategyType: "",
-        };
+      if (!blocks[key]) blocks[key] = emptyBlockState();
 
       // === ROBUST DELTA ===
       let delta = 0;
@@ -1558,6 +1560,12 @@ function populateStagingWithBlockLogicV3() {
       }
     } // end main row loop
 
+    pipelineTimingLog(
+      "populateStagingWithBlockLogicV3 Step 4 loop",
+      tStep4,
+      "rows=" + data.length,
+    );
+
     // ── POST-PASS: Link stock settlement legs to their parent spread block ────
     const closingSpreadLookup = {};
     for (let i = 0; i < data.length; i++) {
@@ -1671,6 +1679,7 @@ function populateStagingWithBlockLogicV3() {
     stagingSheet
       .getRange(1, 1, outputGrid.length, outputGrid[0].length)
       .setValues(outputGrid);
+    pipelineTimingLog("populateStagingWithBlockLogicV3 write Staging", tBlock);
 
     // Display pad: Sheets default can show 16:5. Force 16:05 on Staging.
     if (outputGrid.length >= 4) {

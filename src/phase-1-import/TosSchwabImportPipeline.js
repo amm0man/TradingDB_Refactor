@@ -290,12 +290,22 @@ function tosRunFullTosToSchwabImportBothAccounts() {
   // One pipeline-wide RunId so ALL steps can be filtered together in "Import Issues".
   const pipelineRunId = new Date().toISOString();
   setSetting("ACTIVE_IMPORT_RUN_ID", pipelineRunId);
+  const tAll = pipelineTimingNow();
 
   try {
+    const t1 = pipelineTimingNow();
     tosImportBothSectionsFromFolderBothAccounts();
+    pipelineTimingLog("tosImportBothSectionsFromFolderBothAccounts", t1);
+
+    const t2 = pipelineTimingNow();
     pushTosCombinedToBoth();
+    pipelineTimingLog("pushTosCombinedToBoth", t2);
+
+    const t3 = pipelineTimingNow();
     buildUnifiedImportV3();
+    pipelineTimingLog("buildUnifiedImportV3", t3);
   } finally {
+    pipelineTimingLog("tosRunFullTosToSchwabImportBothAccounts TOTAL", tAll);
     // Always clear so a later manual step doesn’t accidentally reuse this RunId.
     setSetting("ACTIVE_IMPORT_RUN_ID", "");
   }

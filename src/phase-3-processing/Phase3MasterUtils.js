@@ -46,3 +46,40 @@ function backupMasterSheet() {
   m.copyTo(ss).setName(name);
   //logAction('BACKUP MASTER',name);
 }
+
+/**
+ * First clean Master load.
+ * Snapshot → blank Master data → append current Staging.
+ * Do not use this as the daily incremental path.
+ */
+function replaceMasterFromStaging() {
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.alert(
+    "Replace Master from Staging",
+    "This is the first-load path, not daily append.\n\n" +
+      "1) Backup Master (new Master_Backup_… tab)\n" +
+      "2) Blank Master data (keeps row 1 via clearMasterExceptHeader)\n" +
+      "3) Append Staging rows from row 4 (same as appendStagingToMaster)\n\n" +
+      "Cancel if Master already has the history you want to keep.",
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (resp !== ui.Button.OK) return;
+
+  const t0 = pipelineTimingNow();
+  backupMasterSheet();
+  pipelineTimingLog("backupMasterSheet", t0);
+
+  const t1 = pipelineTimingNow();
+  clearMasterExceptHeader();
+  pipelineTimingLog("clearMasterExceptHeader", t1);
+
+  const t2 = pipelineTimingNow();
+  appendStagingToMaster();
+  pipelineTimingLog("appendStagingToMaster after clear (replace)", t2);
+
+  uiAlertSafe(
+    "Master replaced from Staging.\n" +
+      "A Master_Backup_… tab was created.\n" +
+      "Timings are on DB_log (Action = TIMING).",
+  );
+}

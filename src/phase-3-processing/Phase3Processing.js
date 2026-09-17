@@ -71,22 +71,35 @@ function refreshAllScripts() {
   const tz = ss.getSpreadsheetTimeZone();
   const runId = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd HH:mm:ss zzz");
   setSetting("ACTIVE_IMPORT_RUN_ID", runId);
+  const tAll = pipelineTimingNow();
 
   try {
+    const t1 = pipelineTimingNow();
     copyMappingToImportByHeaders(); // Step 1 → Phase3Step1_CopyMapping.js
+    pipelineTimingLog("copyMappingToImportByHeaders", t1);
+
+    const t2 = pipelineTimingNow();
     validateAndCleanImportToHelperV3(); // Step 2 → Phase3Step2_ValidateClean.js
+    pipelineTimingLog("validateAndCleanImportToHelperV3", t2);
+
+    const t3 = pipelineTimingNow();
     populateStagingWithBlockLogicV3(); // Step 3 → Phase3BlockLogic.js
+    pipelineTimingLog("populateStagingWithBlockLogicV3", t3);
+
+    pipelineTimingLog("refreshAllScripts TOTAL", tAll, "RunId=" + runId);
 
     uiAlertSafe(
-      "✅ Full refresh complete!\n" +
+      "Full refresh complete!\n" +
         "RunId: " +
         runId +
         "\n\n" +
-        "Check the 'Staging Issues' sheet and filter by this RunId to review.",
+        "Check the 'Staging Issues' sheet and filter by this RunId to review.\n" +
+        "Step timings are on DB_log (Action = TIMING).",
     );
   } catch (e) {
+    pipelineTimingLog("refreshAllScripts FAILED", tAll, e.message);
     uiAlertSafe(
-      "❌ Pipeline error: " + e.message + "\nCheck Staging Issues sheet.",
+      "Pipeline error: " + e.message + "\nCheck Staging Issues sheet.",
     );
   } finally {
     // Always clear the active RunId — even if an error occurred

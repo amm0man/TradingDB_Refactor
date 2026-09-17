@@ -17,6 +17,7 @@
 //          ⚪ SUMMARY = per-account pipeline statistics
 // ============================================================================
 function auditPipelineIntegrity() {
+  const tAudit = pipelineTimingNow();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const stagingSheet = ss.getSheetByName("Staging");
   if (!stagingSheet) {
@@ -828,6 +829,17 @@ function auditPipelineIntegrity() {
     const warnCount = findings.filter((f) => f[1] === "WARN").length;
     const infoCount = findings.filter((f) => f[1] === "INFO").length;
     const summaryCount = findings.filter((f) => f[1] === "SUMMARY").length;
+
+        pipelineTimingLog(
+      "auditPipelineIntegrity",
+      tAudit,
+      "errors=" +
+        errorCount +
+        " warns=" +
+        warnCount +
+        " info=" +
+        infoCount,
+    );
 
     SpreadsheetApp.getUi().alert(
       '✅ Audit complete! See "Audit Results" sheet.\n\n' +

@@ -6,7 +6,7 @@
  * This file contains only the menu definition (onOpen).
  * All actual processing logic lives in the phase folders and in DBTools.js.
  *
-  * Menu structure:
+ * Menu structure:
  *   DB Tools
  *   ├── Manual Entry
  *   ├── Raw Data for Sorting   (TOS ingest: folders, single-pass, push, FULL)
@@ -91,10 +91,9 @@ function onOpen() {
       "tosRunFullTosToSchwabImportBothAccounts",
     )
     .addSeparator()
-    .addSubMenu(tosLegacyImportMenu)
+    .addSubMenu(tosLegacyImportMenu);
 
-    
-    const settingsMenu = ui
+  const settingsMenu = ui
     .createMenu("Settings")
     .addItem("Set Account Mode DT / LT", `promptSetAccountMode`)
     .addItem(
@@ -132,7 +131,12 @@ function onOpen() {
       "auditPipelineIntegrity",
     )
     .addItem("Push Staging → Master (Append)", "appendStagingToMaster")
+    .addItem(
+      "Replace Master from Staging (first load)",
+      "replaceMasterFromStaging",
+    )
     .addItem("Backup Master (Snapshot)", "backupMasterSheet")
+    .addItem("Inspect seed blocks from Master", "inspectSeedBlocksFromMaster")
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")

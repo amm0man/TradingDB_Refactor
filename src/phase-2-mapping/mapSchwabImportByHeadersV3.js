@@ -191,6 +191,7 @@ const SCHWAB_MAPPING_SCOPE_HEADERS = [
  *   6. Write the result to "Schwab Mapping" and flush metrics/issues
  */
 function mapSchwabImportByHeadersV3() {
+  const tMap = pipelineTimingNow();
   const ss = SpreadsheetApp.getActive();
   const tz = ss.getSpreadsheetTimeZone();
 
@@ -1187,7 +1188,7 @@ function mapSchwabImportByHeadersV3() {
         "Issues logged: " +
         (ctx.issues ? ctx.issues.length : 0),
     );
-  } catch (err) {
+    } catch (err) {
     // If something truly unexpected happens, log it as an ERROR issue row.
     mappingIssuesAdd(
       ctx,
@@ -1207,8 +1208,11 @@ function mapSchwabImportByHeadersV3() {
 
     mappingIssuesFlush(ctx);
     throw err; // keep normal Apps Script failure behavior (so you see the red error)
+  } finally {
+    pipelineTimingLog("mapSchwabImportByHeadersV3", tMap);
   }
 }
+
 
 // =========================================================================
 // ACCOUNT ACTIONS TAGGING HELPERS

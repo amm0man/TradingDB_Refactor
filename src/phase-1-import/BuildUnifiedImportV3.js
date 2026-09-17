@@ -56,6 +56,7 @@
  *   - Contains many nested helper functions (kept local for now)
  */
 function buildUnifiedImportV3() {
+  const tBuild = pipelineTimingNow();
   // ----------------------------
   // 0) Lock (prevents double-runs)
   // ----------------------------
@@ -2350,53 +2351,53 @@ function buildUnifiedImportV3() {
                 ".",
             );
           } else {
-          const stockAction = emitActionU === "SELL" ? "Sell" : "Buy";
-          const stockSide = emitActionU === "SELL" ? "SELL" : "BUY";
-          const stockPosEffect =
-            emitActionU === "SELL" ? "TO CLOSE" : "TO OPEN";
+            const stockAction = emitActionU === "SELL" ? "Sell" : "Buy";
+            const stockSide = emitActionU === "SELL" ? "SELL" : "BUY";
+            const stockPosEffect =
+              emitActionU === "SELL" ? "TO CLOSE" : "TO OPEN";
 
-          const syntheticDesc =
-            `${corpActionStockParsed.phrase} ${corpActionStockMapRow.sourceSymbol} -> ${emitSymbol} ` +
-            `QTY=${emitQty} RAWTOKEN=${corpActionStockParsed.rawToken}`;
+            const syntheticDesc =
+              `${corpActionStockParsed.phrase} ${corpActionStockMapRow.sourceSymbol} -> ${emitSymbol} ` +
+              `QTY=${emitQty} RAWTOKEN=${corpActionStockParsed.rawToken}`;
 
-          const corpActionStockRowObj = {
-            Account: Account,
-            Date: dateIso,
-            Time: timeHHmmss,
-            Timestamp: ts,
-            Action: stockAction,
-            Symbol: emitSymbol,
-            Description: syntheticDesc,
-            Spread: "STOCK",
-            Quantity: emitQty,
-            Price: 0,
-            NetPrice: 0,
-            Side: stockSide,
-            PosEffect: stockPosEffect,
-            Exp: "",
-            Strike: "",
-            OrderType: "",
-            MiscFees: "",
-            FeesComm: "",
-            Amount: "",
-            tradeGroupKey: "",
-            optType: "",
-          };
+            const corpActionStockRowObj = {
+              Account: Account,
+              Date: dateIso,
+              Time: timeHHmmss,
+              Timestamp: ts,
+              Action: stockAction,
+              Symbol: emitSymbol,
+              Description: syntheticDesc,
+              Spread: "STOCK",
+              Quantity: emitQty,
+              Price: 0,
+              NetPrice: 0,
+              Side: stockSide,
+              PosEffect: stockPosEffect,
+              Exp: "",
+              Strike: "",
+              OrderType: "",
+              MiscFees: "",
+              FeesComm: "",
+              Amount: "",
+              tradeGroupKey: "",
+              optType: "",
+            };
 
-          unifiedTrades.push(corpActionStockRowObj);
-          symbolOut = emitSymbol;
+            unifiedTrades.push(corpActionStockRowObj);
+            symbolOut = emitSymbol;
 
-          importIssuesAdd(
-            ctx,
-            "INFO",
-            "TosTop",
-            i + 2,
-            "DESCRIPTION",
-            desc,
-            `Synthetic corp-action STOCK row emitted. Phrase=${corpActionStockParsed.phrase}; ` +
-              `Source=${corpActionStockMapRow.sourceSymbol}; Emit=${emitSymbol}; Qty=${emitQty}; ` +
-              `MatchSymbol=${corpActionStockParsed.resolvedSymbol}.`,
-          );
+            importIssuesAdd(
+              ctx,
+              "INFO",
+              "TosTop",
+              i + 2,
+              "DESCRIPTION",
+              desc,
+              `Synthetic corp-action STOCK row emitted. Phrase=${corpActionStockParsed.phrase}; ` +
+                `Source=${corpActionStockMapRow.sourceSymbol}; Emit=${emitSymbol}; Qty=${emitQty}; ` +
+                `MatchSymbol=${corpActionStockParsed.resolvedSymbol}.`,
+            );
           }
         } else {
           if (!symbolOut && corpActionStockParsed.resolvedSymbol) {
@@ -3013,6 +3014,7 @@ function buildUnifiedImportV3() {
     importIssuesFlush(ctx);
     throw err;
   } finally {
+    pipelineTimingLog("buildUnifiedImportV3", tBuild);
     lock.releaseLock();
   }
 }
