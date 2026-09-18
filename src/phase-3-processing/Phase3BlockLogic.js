@@ -146,6 +146,54 @@ function hasContainingSpreadWindow(
 //   Position IDs / Spread Group IDs, handles symbol changes, exercises,
 //   assignments, and writes the final result to the "Staging" sheet.
 // =========================================================================
+/**
+ * Family I — cash ledger, not a position lot.
+ *
+ * WHY: DOI / cash dividend / cash interest often carry a Ticker
+ * (INT, AAPL, …). The old skip only ignored those actions when Ticker
+ * was blank, so Step 4 opened DT-INT-OTH-TG001 and DT-AAPL-OTH-TG001.
+ *
+ * Keep DRIP in the block loop — those rows book shares.
+ * Keep SYMBOL CHANGE, SPLIT, Transfer, and option/assignment RAD.
+ */
+function isCashLedgerNoBlock_(
+  action,
+  ticker,
+  corporateActions,
+  accountActions,
+) {
+  const act = String(action || "")
+    .trim()
+    .toUpperCase();
+  const tkr = String(ticker || "")
+    .trim()
+    .toUpperCase();
+  const corp = String(corporateActions || "")
+    .trim()
+    .toUpperCase();
+  const acctA = String(accountActions || "")
+    .trim()
+    .toUpperCase();
+
+  if (act === "DOI") return true;
+  if (tkr === "INT") return true;
+
+  // Share-reinvestment is a stock lot, not cash.
+  if (corp.indexOf("DRIP") !== -1) return false;
+
+  if (corp.indexOf("CASH INTEREST") !== -1) return true;
+  if (corp.indexOf("BOND INTEREST") !== -1) return true;
+  if (corp.indexOf("INTEREST ADJUSTMENT") !== -1) return true;
+  if (corp.indexOf("CASH DIVIDEND") !== -1) return true;
+  if (corp.indexOf("DIVIDEND") !== -1) return true;
+
+  if (acctA.indexOf("CASH ALTERNATIVES INTEREST") !== -1) return true;
+  if (acctA.indexOf("CREDIT INTEREST") !== -1) return true;
+  if (acctA.indexOf("CASH INTEREST") !== -1) return true;
+
+  return false;
+}
+
 function populateStagingWithBlockLogicV3(seedBlocks) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const helperSheet = ss.getSheetByName("Helper");
@@ -709,8 +757,36 @@ function populateStagingWithBlockLogicV3(seedBlocks) {
         action !== "SYMBOL CHANGE" &&
         !ticker
       ) {
-        row[colMap["position id"] - 1] = "";
-        row[colMap["trade group id"] - 1] = "";
+        if (colMap["position id"] !== undefined)
+          row[colMap["position id"] - 1] = "";
+        if (colMap["trade group id"] !== undefined)
+          row[colMap["trade group id"] - 1] = "";
+        continue;
+      }
+
+      // Family I: cash ledger with a ticker (DOI interest, cash dividend,
+      // Cash Alternatives Interest RAD). Do not open or touch blocks{}.
+      const corpActForSkip =
+        colMap["corporate actions"] !== undefined
+          ? String(row[colMap["corporate actions"] - 1] || "")
+          : "";
+      const acctActForSkip =
+        colMap["account actions"] !== undefined
+          ? String(row[colMap["account actions"] - 1] || "")
+          : "";
+      if (
+        isCashLedgerNoBlock_(action, ticker, corpActForSkip, acctActForSkip)
+      ) {
+        if (colMap["position id"] !== undefined)
+          row[colMap["position id"] - 1] = "";
+        if (colMap["trade group id"] !== undefined)
+          row[colMap["trade group id"] - 1] = "";
+        if (colMap["block start flag"] !== undefined)
+          row[colMap["block start flag"] - 1] = 0;
+        if (colMap["block close flag/p&l"] !== undefined)
+          row[colMap["block close flag/p&l"] - 1] = 0;
+        if (colMap["block number"] !== undefined)
+          row[colMap["block number"] - 1] = "";
         continue;
       }
 

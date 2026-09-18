@@ -704,6 +704,37 @@ function auditPipelineIntegrity() {
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // CHECK 14 — Cash ledger row has a Trade Group ID or Position ID
+    // WHY: Family I. DOI, cash dividend, and cash-interest RAD must not
+    //      open DT-INT-OTH-TG001 / DT-AAPL-OTH-TG001. DRIP is excluded
+    //      inside isCashLedgerNoBlock_ (those book shares).
+    // ════════════════════════════════════════════════════════════════════════
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const action = cvUpper(row, "action");
+      const ticker = cvStr(row, "ticker");
+      const corpAct = cvStr(row, "corporate actions");
+      const acctAct = cvStr(row, "account actions");
+      if (!isCashLedgerNoBlock_(action, ticker, corpAct, acctAct)) continue;
+      const tgId = cvStr(row, "trade group id");
+      const posId = cvStr(row, "position id");
+      if (!tgId && !posId) continue;
+      flag(
+        "CASH_LEDGER_HAS_TRADE_GROUP",
+        "WARN",
+        i,
+        cv(row, "account"),
+        ticker,
+        cvDate(row, "trade date"),
+        action,
+        "Trade Group ID",
+        tgId || posId,
+        "Cash ledger row (DOI / dividend / cash interest) has lot identity. " +
+          "Family I should leave Trade Group ID and Position ID blank.",
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // SUMMARY — Per-account pipeline statistics
     // ════════════════════════════════════════════════════════════════════════
     const acctStats = {};
@@ -830,15 +861,10 @@ function auditPipelineIntegrity() {
     const infoCount = findings.filter((f) => f[1] === "INFO").length;
     const summaryCount = findings.filter((f) => f[1] === "SUMMARY").length;
 
-        pipelineTimingLog(
+    pipelineTimingLog(
       "auditPipelineIntegrity",
       tAudit,
-      "errors=" +
-        errorCount +
-        " warns=" +
-        warnCount +
-        " info=" +
-        infoCount,
+      "errors=" + errorCount + " warns=" + warnCount + " info=" + infoCount,
     );
 
     SpreadsheetApp.getUi().alert(
