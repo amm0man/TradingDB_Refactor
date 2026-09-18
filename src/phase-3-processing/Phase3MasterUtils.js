@@ -28,21 +28,58 @@ function appendStagingToMaster() {
 
   // Get Staging data (row 4 down)
   // Changed to see if all rows are filled
-  const accountColIdx = staging.getRange(1, 1, 1, numCols).getValues()[0].indexOf("Trade Date") + 1;
+  const accountColIdx =
+    staging.getRange(1, 1, 1, numCols).getValues()[0].indexOf("Trade Date") + 1;
   //const accountColIdx = staging.getRange(1, 1, 1, numCols).getValues()[0].indexOf("Trade Date") + 1;
-  const stagingData = staging.getRange(4, 1, staging.getLastRow() - 3, numCols).getValues()
-    .filter(row => row[accountColIdx - 1] !== "" && row[accountColIdx - 1] !== null);
+  const stagingData = staging
+    .getRange(4, 1, staging.getLastRow() - 3, numCols)
+    .getValues()
+    .filter(
+      (row) => row[accountColIdx - 1] !== "" && row[accountColIdx - 1] !== null,
+    );
 
   // Find first empty row in Master (after header)
   const firstEmptyMasterRow = master.getLastRow() + 1;
 
   if (stagingData.length) {
-    master.getRange(firstEmptyMasterRow, 1, stagingData.length, numCols).setValues(stagingData);
+    master
+      .getRange(firstEmptyMasterRow, 1, stagingData.length, numCols)
+      .setValues(stagingData);
+
+    // Staging formats are not copied by setValues.
+    // Trade Time is a time-of-day serial; without HH:mm Master shows 12/30/1899.
+    const headers = master
+      .getRange(1, 1, 1, numCols)
+      .getValues()[0]
+      .map(function (h) {
+        return String(h || "")
+          .trim()
+          .toLowerCase();
+      });
+    const tsCol = headers.indexOf("trade time stamp") + 1;
+    const tmCol = headers.indexOf("trade time") + 1;
+    if (tsCol > 0) {
+      master
+        .getRange(firstEmptyMasterRow, tsCol, stagingData.length, 1)
+        .setNumberFormat("M/d/yyyy HH:mm");
+    }
+    if (tmCol > 0) {
+      master
+        .getRange(firstEmptyMasterRow, tmCol, stagingData.length, 1)
+        .setNumberFormat("HH:mm");
+    }
   }
 }
 function backupMasterSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet(), m = ss.getSheetByName('Master');
-  const name = 'Master_Backup_' + Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyyMMdd_HHmmss');
+  const ss = SpreadsheetApp.getActiveSpreadsheet(),
+    m = ss.getSheetByName("Master");
+  const name =
+    "Master_Backup_" +
+    Utilities.formatDate(
+      new Date(),
+      ss.getSpreadsheetTimeZone(),
+      "yyyyMMdd_HHmmss",
+    );
   m.copyTo(ss).setName(name);
   //logAction('BACKUP MASTER',name);
 }
