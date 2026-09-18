@@ -661,6 +661,16 @@ function mapSchwabImportByHeadersV3() {
           }
         }
       }
+
+      // Cash-sweep vehicles are not position tickers.
+      // Symbol "MMDA" on DOI / Cash Interest used to leak into Mapping.
+      if (ticker) {
+        const tkrSweep = String(ticker).trim().toUpperCase();
+        if (tkrSweep === "MMDA" || tkrSweep === "INT") {
+          ticker = "";
+        }
+      }
+
       /** Remove if SQQQ1 resolves right 9/15/26 1850
       // Format B leftover: option/RAD ticker SQQQ1 → SQQQ.
       // Phase 1 parseDotted used to glue the year pad digit onto the root.
@@ -1188,7 +1198,7 @@ function mapSchwabImportByHeadersV3() {
         "Issues logged: " +
         (ctx.issues ? ctx.issues.length : 0),
     );
-    } catch (err) {
+  } catch (err) {
     // If something truly unexpected happens, log it as an ERROR issue row.
     mappingIssuesAdd(
       ctx,
@@ -1212,7 +1222,6 @@ function mapSchwabImportByHeadersV3() {
     pipelineTimingLog("mapSchwabImportByHeadersV3", tMap);
   }
 }
-
 
 // =========================================================================
 // ACCOUNT ACTIONS TAGGING HELPERS

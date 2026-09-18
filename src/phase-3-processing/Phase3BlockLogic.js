@@ -156,6 +156,18 @@ function hasContainingSpreadWindow(
  * Keep DRIP in the block loop — those rows book shares.
  * Keep SYMBOL CHANGE, SPLIT, Transfer, and option/assignment RAD.
  */
+
+/**
+ * Schwab cash-sweep / interest vehicle names. Not traded lots.
+ * Used to be stripped by name years ago; that skip is no longer in the repo.
+ */
+function isCashSweepTicker_(ticker) {
+  const tkr = String(ticker || "")
+    .trim()
+    .toUpperCase();
+  return tkr === "MMDA" || tkr === "INT";
+}
+
 function isCashLedgerNoBlock_(
   action,
   ticker,
@@ -176,7 +188,7 @@ function isCashLedgerNoBlock_(
     .toUpperCase();
 
   if (act === "DOI") return true;
-  if (tkr === "INT") return true;
+  if (tkr === "INT" || tkr === "MMDA") return true;
 
   // Share-reinvestment is a stock lot, not cash.
   if (corp.indexOf("DRIP") !== -1) return false;
@@ -787,6 +799,9 @@ function populateStagingWithBlockLogicV3(seedBlocks) {
           row[colMap["block close flag/p&l"] - 1] = 0;
         if (colMap["block number"] !== undefined)
           row[colMap["block number"] - 1] = "";
+        if (isCashSweepTicker_(ticker) && colMap["ticker"] !== undefined) {
+          row[colMap["ticker"] - 1] = "";
+        }
         continue;
       }
 
