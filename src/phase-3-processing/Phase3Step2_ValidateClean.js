@@ -132,6 +132,7 @@ function parseTradeTimeStamp(tsVal, tradeDateVal, tradeTimeVal, ss) {
 //   into the "Helper" sheet that the block logic will read.
 // =========================================================================
 function validateAndCleanImportToHelperV3() {
+  const tVal = pipelineTimingNow();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const importSheet = ss.getSheetByName("Import");
   const helperSheet = ss.getSheetByName("Helper");
@@ -627,6 +628,7 @@ function validateAndCleanImportToHelperV3() {
     // The old placement of stagingIssuesFlush(ctx) was at the end of the normal
     // flow only. Moving it here guarantees a log entry exists for every run,
     // successful or not.
+    pipelineTimingLog("validateAndCleanImportToHelperV3", tVal);
     stagingIssuesFlush(ctx);
   }
 }

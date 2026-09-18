@@ -24,6 +24,7 @@
 //   Also does early Strategy Type / settlement-row handling that Phase 3 needs.
 // =========================================================================
 function copyMappingToImportByHeaders() {
+  const tCopy = pipelineTimingNow();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // ── Staging Issues CTX ───────────────────────────────────────────────────
@@ -970,6 +971,7 @@ function copyMappingToImportByHeaders() {
     // This was the original bug: stagingIssuesFlush(ctx) only ran at the end
     // of the try block, so any crash produced a blank Staging Issues row.
     // Moving it here guarantees you always get a log entry for this step.
+    pipelineTimingLog("copyMappingToImportByHeaders", tCopy);
     stagingIssuesFlush(ctx);
   }
 }
