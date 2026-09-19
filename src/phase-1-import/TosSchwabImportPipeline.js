@@ -903,44 +903,6 @@ function tosTradesWriteCombinedFromParsed(
     const accountKey = String(obj.Account || "");
     const key = tosTradesDedupeKey_(accountKey, canonicalHeader, r);
 
-    const idxSymDbg = canonicalHeader.indexOf("Symbol");
-    const idxStrikeDbg = canonicalHeader.indexOf("Strike");
-    const idxExecDbg = canonicalHeader.indexOf("Exec Time");
-    const idxQtyDbg = canonicalHeader.indexOf("Qty");
-    const idxExpDbg = canonicalHeader.indexOf("Exp");
-    const idxPxDbg = canonicalHeader.indexOf("Price");
-    const symDbg =
-      idxSymDbg >= 0
-        ? String(r[idxSymDbg] || "")
-            .trim()
-            .toUpperCase()
-        : "";
-    const strikeDbg = idxStrikeDbg >= 0 ? String(r[idxStrikeDbg] || "") : "";
-    if (
-      symDbg === "SPX" &&
-      (String(strikeDbg).indexOf("4510") >= 0 ||
-        String(strikeDbg).indexOf("4515") >= 0)
-    ) {
-      importIssuesAdd(
-        ctx,
-        "INFO",
-        obj.sourceFile || "",
-        "",
-        "TRADE_DEDUP_KEY",
-        String(r[idxExecDbg] || ""),
-        [
-          "qty=" + (idxQtyDbg >= 0 ? r[idxQtyDbg] : ""),
-          "exp=" + (idxExpDbg >= 0 ? r[idxExpDbg] : ""),
-          "strike=" + strikeDbg,
-          "px=" + (idxPxDbg >= 0 ? r[idxPxDbg] : ""),
-          "headerQtyIdx=" + idxQtyDbg,
-          "rowLen=" + r.length,
-          "hdrLen=" + canonicalHeader.length,
-          "key=" + key.split("\u0001").join(" | "),
-        ].join(" ; "),
-      );
-    }
-
     if (!bucketsByKey[key]) {
       bucketsByKey[key] = {
         countsByFile: {},
