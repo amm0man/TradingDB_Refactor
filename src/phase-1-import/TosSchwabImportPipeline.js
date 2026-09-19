@@ -599,6 +599,162 @@ function tosListCsvFilesInFolder(folder, ctx) {
   return csvFiles;
 }
 
+/**
+ * Phase 1 Combined identity helpers (overlap days across yearly CSVs).
+ *
+ * Why this exists:
+ *   The old key was Account + the entire row joined together.
+ *   Year-boundary files describe the SAME event with tiny text differences:
+ *     TosTop DATE  8/31/2022 vs 8/31/22
+ *     TosTop BALANCE  3,304.30 vs 3,304.02   (running cash — not identity)
+ *     TosTrades Exec Time  08:42:00 vs 08:42:21  (new file often drops seconds)
+ *     TosTrades Qty  1 vs +1
+ *   Full-row equality then keeps both copies.
+ *
+ * Intra-file true dups are still preserved: we keep the highest per-file count.
+ */
+
+function tosNormalizeRefNum_(raw) {
+  let s = String(raw == null ? "" : raw).trim();
+  const quoted = s.match(/^="([^"]*)"$/);
+  if (quoted) s = String(quoted[1] || "").trim();
+  if (s.charAt(0) === "=") s = s.substring(1).trim();
+  if (s.charAt(0) === '"' && s.charAt(s.length - 1) === '"') {
+    s = s.substring(1, s.length - 1).trim();
+  }
+  return s;
+}
+
+function tosNormalizeAmountKey_(raw) {
+  const t = String(raw == null ? "" : raw)
+    .replace(/[$,]/g, "")
+    .trim();
+  if (!t) return "";
+  const n = Number(t);
+  return isFinite(n) ? String(n) : t;
+}
+
+function tosNormalizeSignedQtyKey_(raw) {
+  const t = String(raw == null ? "" : raw)
+    .replace(/[$,]/g, "")
+    .replace(/^\+/, "")
+    .trim();
+  if (!t) return "";
+  const n = Number(t);
+  return isFinite(n) ? String(n) : t;
+}
+
+function tosTradesExecTimeHasRealSeconds_(v) {
+  const t = String(v == null ? "" : v).trim();
+  const m = t.match(/:\d{2}:(\d{2})/);
+  if (!m) return false;
+  return parseInt(m[1], 10) !== 0;
+}
+
+function tosTradesExecTimeMinuteKey_(v) {
+  const t = String(v == null ? "" : v).trim();
+  if (!t) return "";
+
+  // Combined-style already written: "2023-08-31 08:42:21"
+  const iso = t.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/,
+  );
+  if (iso) {
+    return (
+      iso[1] +
+      "-" +
+      iso[2] +
+      "-" +
+      iso[3] +
+      " " +
+      String(iso[4]).padStart(2, "0") +
+      ":" +
+      iso[5]
+    );
+  }
+
+  // Raw TOS CSV: "8/31/23 8:42:21" → "yyyy-MM-dd HH:mm:ss" via the same
+  // converter the Combined writer uses, then drop seconds.
+  const converted = tosTradesParseExecTimeRaw(t);
+  if (converted && String(converted).length >= 16) {
+    return String(converted).substring(0, 16);
+  }
+
+  // Last resort: strip trailing :SS so 8:42:00 and 8:42:21 become 8:42
+  return t.replace(/(\d{1,2}:\d{2}):\d{2}\s*$/, "$1");
+}
+
+function tosTopDedupeKey_(account, header, row) {
+  function cell(name) {
+    const i = header.indexOf(name);
+    return i >= 0 ? row[i] : "";
+  }
+
+  const dateKey =
+    tosTopNormalizeDateToIso(cell("DATE")) || String(cell("DATE") || "").trim();
+  const timeKey = String(cell("TIME") || "").trim();
+  const typeKey = String(cell("TYPE") || "")
+    .trim()
+    .toUpperCase();
+  const refKey = tosNormalizeRefNum_(cell("REF #"));
+  const amtKey = tosNormalizeAmountKey_(cell("AMOUNT"));
+  const miscKey = tosNormalizeAmountKey_(cell("Misc Fees"));
+  const commIdx =
+    header.indexOf("Commissions & Fees") >= 0
+      ? header.indexOf("Commissions & Fees")
+      : header.indexOf("Commissions Fees");
+  const commKey = commIdx >= 0 ? tosNormalizeAmountKey_(row[commIdx]) : "";
+  // REF # is the broker id. Only use DESCRIPTION when REF is blank
+  // (some JRN / DOI lines have no REF).
+  const descKey = refKey
+    ? ""
+    : String(cell("DESCRIPTION") || "")
+        .trim()
+        .toUpperCase();
+
+  return [
+    String(account || ""),
+    dateKey,
+    timeKey,
+    typeKey,
+    refKey,
+    descKey,
+    miscKey,
+    commKey,
+    amtKey,
+  ].join("\u0001");
+}
+
+function tosTradesDedupeKey_(account, header, row) {
+  function cell(name) {
+    const i = header.indexOf(name);
+    return i >= 0 ? row[i] : "";
+  }
+
+  return [
+    String(account || ""),
+    tosTradesExecTimeMinuteKey_(cell("Exec Time")),
+    String(cell("Side") || "")
+      .trim()
+      .toUpperCase(),
+    tosNormalizeSignedQtyKey_(cell("Qty")),
+    String(cell("Pos Effect") || "")
+      .trim()
+      .toUpperCase(),
+    String(cell("Symbol") || "")
+      .trim()
+      .toUpperCase(),
+    String(cell("Exp") || "")
+      .trim()
+      .toUpperCase(),
+    tosNormalizeAmountKey_(cell("Strike")),
+    String(cell("Type") || "")
+      .trim()
+      .toUpperCase(),
+    tosNormalizeAmountKey_(cell("Price")),
+  ].join("\u0001");
+}
+
 /** ======================================================================
  *  COMBINED WRITE TAILS
  *  Shared by the old one-section walks and the new single-pass import.
@@ -675,8 +831,9 @@ function tosTradesWriteCombinedFromParsed(
   }
 
   // Dedupe: overlap-safe but preserves legitimate duplicates within a single file.
-  // IMPORTANT: The key includes Account so LT/DT identical trades never collapse each other.
-  const bucketsByKey = {}; // key -> { rowTemplate, countsByFile: { [fileName]: n }, Account }
+  // Key is identity fields only (minute Exec Time, signed qty number).
+  // Does NOT include Price Improvement, Net Price, Order Type, or raw qty "+1" vs "1".
+  const bucketsByKey = {};
 
   for (let i = 0; i < allRows.length; i++) {
     const obj = allRows[i];
@@ -685,13 +842,12 @@ function tosTradesWriteCombinedFromParsed(
     if (tosTradesIsRowBlank(r)) continue;
 
     const accountKey = String(obj.Account || "");
-    const rowKey = r.join("\u0001");
-    const key = accountKey + "\u0001" + rowKey;
+    const key = tosTradesDedupeKey_(accountKey, canonicalHeader, r);
 
     if (!bucketsByKey[key]) {
       bucketsByKey[key] = {
-        rowTemplate: r.slice(),
         countsByFile: {},
+        rowByFile: {},
         Account: accountKey,
       };
     }
@@ -699,6 +855,9 @@ function tosTradesWriteCombinedFromParsed(
     const f = obj.sourceFile || "";
     bucketsByKey[key].countsByFile[f] =
       (bucketsByKey[key].countsByFile[f] || 0) + 1;
+    if (!bucketsByKey[key].rowByFile[f]) {
+      bucketsByKey[key].rowByFile[f] = r.slice();
+    }
   }
 
   const deduped = []; // { Account, sourceFile, row }
@@ -707,36 +866,48 @@ function tosTradesWriteCombinedFromParsed(
   ctx.metrics.CombinedRowsTotal = allRows.length;
   ctx.metrics.UniqueKeys = keys.length;
 
+  let overlapKeys = 0;
+
   for (let k = 0; k < keys.length; k++) {
     const key = keys[k];
     const bucket = bucketsByKey[key];
 
     let bestFile = "";
     let bestCount = 0;
+    let bestHasSeconds = false;
 
     const fileNames = Object.keys(bucket.countsByFile);
+    if (fileNames.length > 1) overlapKeys++;
+
     for (let i = 0; i < fileNames.length; i++) {
       const f = fileNames[i];
       const c = bucket.countsByFile[f] || 0;
+      const rowF = bucket.rowByFile[f] || [];
+      const hasSec = tosTradesExecTimeHasRealSeconds_(rowF[idxExec]);
 
-      if (c > bestCount) {
+      const betterCount = c > bestCount;
+      const betterSeconds = c === bestCount && hasSec && !bestHasSeconds;
+      const betterName =
+        c === bestCount && hasSec === bestHasSeconds && f < bestFile;
+
+      if (!bestFile || betterCount || betterSeconds || betterName) {
         bestCount = c;
         bestFile = f;
-      } else if (c === bestCount && f < bestFile) {
-        bestFile = f;
+        bestHasSeconds = hasSec;
       }
     }
 
+    const bestRow = bucket.rowByFile[bestFile] || [];
     for (let n = 0; n < bestCount; n++) {
       deduped.push({
         Account: bucket.Account,
         sourceFile: bestFile,
-        row: bucket.rowTemplate.slice(),
+        row: bestRow.slice(),
       });
     }
   }
 
-  ctx.metrics.DedupedRows = deduped.length;
+  ctx.metrics.OverlapKeysCollapsed = overlapKeys;
 
   deduped.sort((a, b) => {
     const da = tosTradesParseExecTime(a.row[idxExec]);
@@ -939,20 +1110,19 @@ function tosTopWriteCombinedFromParsed(
     return;
   }
 
-  const bucketsByKey = {};
+   const bucketsByKey = {};
 
   for (const obj of rowsAll) {
     const r = obj.row;
 
     const accountKey = String(obj.Account || "");
-    const rowKey = r.join("\u0001");
-    const key = accountKey + "\u0001" + rowKey;
+    const key = tosTopDedupeKey_(accountKey, canonicalHeader, r);
 
     if (!bucketsByKey[key]) {
       bucketsByKey[key] = {
-        rowTemplate: r.slice(),
         dt: obj.dt || null,
         countsByFile: {},
+        rowByFile: {},
         timeRawByFile: {},
         Account: accountKey,
       };
@@ -961,7 +1131,9 @@ function tosTopWriteCombinedFromParsed(
     const f = obj.sourceFile || "";
     bucketsByKey[key].countsByFile[f] =
       (bucketsByKey[key].countsByFile[f] || 0) + 1;
-
+    if (!bucketsByKey[key].rowByFile[f]) {
+      bucketsByKey[key].rowByFile[f] = r.slice();
+    }
     if (bucketsByKey[key].timeRawByFile[f] === undefined) {
       bucketsByKey[key].timeRawByFile[f] = obj.timeRaw ?? "";
     }
@@ -971,6 +1143,8 @@ function tosTopWriteCombinedFromParsed(
   const keys = Object.keys(bucketsByKey);
   ctx.metrics.UniqueKeys = keys.length;
 
+  let overlapKeys = 0;
+
   for (let k = 0; k < keys.length; k++) {
     const key = keys[k];
     const bucket = bucketsByKey[key];
@@ -979,6 +1153,8 @@ function tosTopWriteCombinedFromParsed(
     let bestCount = 0;
 
     const fileNames = Object.keys(bucket.countsByFile);
+    if (fileNames.length > 1) overlapKeys++;
+
     for (let i = 0; i < fileNames.length; i++) {
       const f = fileNames[i];
       const c = bucket.countsByFile[f] || 0;
@@ -995,19 +1171,20 @@ function tosTopWriteCombinedFromParsed(
       bucket.timeRawByFile && bucket.timeRawByFile[bestFile] !== undefined
         ? bucket.timeRawByFile[bestFile]
         : "";
+    const bestRow = bucket.rowByFile[bestFile] || [];
 
     for (let n = 0; n < bestCount; n++) {
       deduped.push({
         Account: bucket.Account,
         sourceFile: bestFile,
-        row: bucket.rowTemplate.slice(),
+        row: bestRow.slice(),
         dt: bucket.dt,
         timeRaw: bestTimeRaw,
       });
     }
   }
 
-  ctx.metrics.DedupedRows = deduped.length;
+  ctx.metrics.OverlapKeysCollapsed = overlapKeys;
 
   deduped.sort((a, b) => {
     const da = a.dt,
@@ -1050,9 +1227,7 @@ function tosTopWriteCombinedFromParsed(
         const s = String(timeRawVal.getSeconds()).padStart(2, "0");
         timeRawStr = h + m + s;
       } else {
-        timeRawStr = normalizeTimeHHmmss(
-          String(timeRawVal ?? "").trim(),
-        );
+        timeRawStr = normalizeTimeHHmmss(String(timeRawVal ?? "").trim());
       }
       const timeCorrected = tosEtToCtHHmmss(timeRawStr, dateIso ?? "");
       if (timeCorrected) row[fiTimeCol] = timeCorrected;
