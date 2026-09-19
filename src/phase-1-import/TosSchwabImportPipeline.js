@@ -655,10 +655,36 @@ function tosTradesExecTimeMinuteKey_(v) {
   const t = String(v == null ? "" : v).trim();
   if (!t) return "";
 
-  // Combined-style already written: "2023-08-31 08:42:21"
-  const iso = t.match(
-    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/,
+  // "8/31/23 7:42:21" or "8/31/2023 7:42" or "8/31/23 7:42:00"
+  // Not anchored — trailing junk must not keep two keys.
+  const mdy = t.match(
+    /(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/,
   );
+  if (mdy) {
+    let yyyy = parseInt(mdy[3], 10);
+    if (yyyy < 100) yyyy += 2000;
+    const mm = parseInt(mdy[1], 10);
+    let dd = parseInt(mdy[2], 10);
+    let HH = parseInt(mdy[4], 10) + 1; // ET → CT
+    const MIN = String(mdy[5]).padStart(2, "0");
+    if (HH >= 24) {
+      HH -= 24;
+      dd += 1;
+    }
+    return (
+      String(yyyy) +
+      "-" +
+      String(mm).padStart(2, "0") +
+      "-" +
+      String(dd).padStart(2, "0") +
+      " " +
+      String(HH).padStart(2, "0") +
+      ":" +
+      MIN
+    );
+  }
+
+  const iso = t.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/);
   if (iso) {
     return (
       iso[1] +
@@ -673,15 +699,12 @@ function tosTradesExecTimeMinuteKey_(v) {
     );
   }
 
-  // Raw TOS CSV: "8/31/23 8:42:21" → "yyyy-MM-dd HH:mm:ss" via the same
-  // converter the Combined writer uses, then drop seconds.
   const converted = tosTradesParseExecTimeRaw(t);
   if (converted && String(converted).length >= 16) {
     return String(converted).substring(0, 16);
   }
 
-  // Last resort: strip trailing :SS so 8:42:00 and 8:42:21 become 8:42
-  return t.replace(/(\d{1,2}:\d{2}):\d{2}\s*$/, "$1");
+  return t;
 }
 
 function tosTopDedupeKey_(account, header, row) {
@@ -725,6 +748,44 @@ function tosTopDedupeKey_(account, header, row) {
   ].join("\u0001");
 }
 
+function tosNormalizeExpKey_(raw) {
+  const t = String(raw == null ? "" : raw)
+    .trim()
+    .toUpperCase();
+  if (!t) return "";
+
+  const mon = {
+    JAN: "01",
+    FEB: "02",
+    MAR: "03",
+    APR: "04",
+    MAY: "05",
+    JUN: "06",
+    JUL: "07",
+    AUG: "08",
+    SEP: "09",
+    OCT: "10",
+    NOV: "11",
+    DEC: "12",
+  };
+
+  // 31-Aug-23  /  31 Aug 23  /  31/Aug/2023
+  let m = t.match(/^(\d{1,2})[-\s\/]+([A-Z]{3})[-\s\/]+(\d{2,4})$/);
+  if (m && mon[m[2]]) {
+    let yyyy = parseInt(m[3], 10);
+    if (yyyy < 100) yyyy += 2000;
+    return (
+      String(yyyy) +
+      "-" +
+      mon[m[2]] +
+      "-" +
+      String(parseInt(m[1], 10)).padStart(2, "0")
+    );
+  }
+
+  return t.replace(/-/g, " ").replace(/\s+/g, " ");
+}
+
 function tosTradesDedupeKey_(account, header, row) {
   function cell(name) {
     const i = header.indexOf(name);
@@ -744,9 +805,7 @@ function tosTradesDedupeKey_(account, header, row) {
     String(cell("Symbol") || "")
       .trim()
       .toUpperCase(),
-    String(cell("Exp") || "")
-      .trim()
-      .toUpperCase(),
+    tosNormalizeExpKey_(cell("Exp")),
     tosNormalizeAmountKey_(cell("Strike")),
     String(cell("Type") || "")
       .trim()
@@ -843,6 +902,44 @@ function tosTradesWriteCombinedFromParsed(
 
     const accountKey = String(obj.Account || "");
     const key = tosTradesDedupeKey_(accountKey, canonicalHeader, r);
+
+    const idxSymDbg = canonicalHeader.indexOf("Symbol");
+    const idxStrikeDbg = canonicalHeader.indexOf("Strike");
+    const idxExecDbg = canonicalHeader.indexOf("Exec Time");
+    const idxQtyDbg = canonicalHeader.indexOf("Qty");
+    const idxExpDbg = canonicalHeader.indexOf("Exp");
+    const idxPxDbg = canonicalHeader.indexOf("Price");
+    const symDbg =
+      idxSymDbg >= 0
+        ? String(r[idxSymDbg] || "")
+            .trim()
+            .toUpperCase()
+        : "";
+    const strikeDbg = idxStrikeDbg >= 0 ? String(r[idxStrikeDbg] || "") : "";
+    if (
+      symDbg === "SPX" &&
+      (String(strikeDbg).indexOf("4510") >= 0 ||
+        String(strikeDbg).indexOf("4515") >= 0)
+    ) {
+      importIssuesAdd(
+        ctx,
+        "INFO",
+        obj.sourceFile || "",
+        "",
+        "TRADE_DEDUP_KEY",
+        String(r[idxExecDbg] || ""),
+        [
+          "qty=" + (idxQtyDbg >= 0 ? r[idxQtyDbg] : ""),
+          "exp=" + (idxExpDbg >= 0 ? r[idxExpDbg] : ""),
+          "strike=" + strikeDbg,
+          "px=" + (idxPxDbg >= 0 ? r[idxPxDbg] : ""),
+          "headerQtyIdx=" + idxQtyDbg,
+          "rowLen=" + r.length,
+          "hdrLen=" + canonicalHeader.length,
+          "key=" + key.split("\u0001").join(" | "),
+        ].join(" ; "),
+      );
+    }
 
     if (!bucketsByKey[key]) {
       bucketsByKey[key] = {
@@ -1020,7 +1117,9 @@ function tosTradesWriteCombinedFromParsed(
       fileCount +
       "\n" +
       "Rows written (excl header): " +
-      (finalOut.length - 1),
+      (finalOut.length - 1) +
+      "\nOverlap keys (same trade in 2+ files): " +
+      overlapKeys,
   );
 }
 
@@ -1110,7 +1209,7 @@ function tosTopWriteCombinedFromParsed(
     return;
   }
 
-   const bucketsByKey = {};
+  const bucketsByKey = {};
 
   for (const obj of rowsAll) {
     const r = obj.row;
