@@ -22,10 +22,11 @@
  *   on the last old-ticker row while running qty is still open — audit CHECK 2
  *   (close flag 1 but running qty ≠ 0) would fire.
  *
- *   Seed instead: when a Master row is a SYMBOL CHANGE, flatten acct|FROM after
- *   applying the dest-ticker last-row state. Inspect then shows LT|ENCUF,
- *   LT|ISENF, LT|SV as CLOSED. The dest key (EU / ISOU / SMR) stays whatever
- *   its own last row says.
+ *   Seed flattens:
+ *     1) Notes FROM= / FROM_RESOLVED= when those tokens differ from dest
+ *     2) Earlier stock key when the same Position ID / Trade Group ID later
+ *        appears under a different ticker
+ *     3) Classified aliases (ENCUF→EU, ISENF→ISOU, SV→SMR) when both keys exist
  */
 
 /**
@@ -34,6 +35,18 @@
  * as a live block key in a later incremental Step 4.
  */
 var SEED_RETIRED_BY_RENAME_ = {};
+
+/**
+ * Classified rename-source → dest tickers for seed honesty.
+ * Seed-only. Not used by the Phase 3 full rebuild.
+ * Add a row when Inspect shows LIVE under a retired name and Master
+ * confirms a rename (not a still-held separate lot).
+ */
+var FAMILY_S_TICKER_ALIASES_ = {
+  ENCUF: "EU",
+  ISENF: "ISOU",
+  SV: "SMR",
+};
 
 /**
  * Factory for one blocks{} entry.
@@ -130,7 +143,8 @@ function parseSymbolChangeFromMasterRow_(row, col) {
           .toUpperCase()
       : "";
 
-  const isRename = action === "SYMBOL CHANGE" || corp === "SYMBOL CHANGE";
+  const isRename =
+    action === "SYMBOL CHANGE" || corp.indexOf("SYMBOL CHANGE") !== -1;
   if (!isRename) return null;
 
   const notes =
@@ -138,14 +152,26 @@ function parseSymbolChangeFromMasterRow_(row, col) {
   if (!notes) return null;
 
   function pull(label) {
-    const m = notes.match(new RegExp(label + "=([^|]+)", "i"));
+    const m = notes.match(
+      new RegExp("(?:^|\\|\\s*)" + label + "=([^|]+)", "i"),
+    );
     return m ? String(m[1]).trim().toUpperCase() : "";
   }
 
-  const fromRaw = pull("FROM");
-  const toRaw = pull("TO");
+  let fromRaw = pull("FROM");
+  let toRaw = pull("TO");
   const fromResolved = pull("FROM_RESOLVED");
   const toResolved = pull("TO_RESOLVED");
+  const raw = pull("RAW");
+
+  const phraseSrc = raw || notes;
+  const phrase = String(phraseSrc).match(
+    /SYMBOL CHANGE FROM\s+([A-Z0-9.\/]+)\s+TO\s+([A-Z0-9.\/]+)/i,
+  );
+  if (phrase) {
+    if (!fromRaw) fromRaw = String(phrase[1]).trim().toUpperCase();
+    if (!toRaw) toRaw = String(phrase[2]).trim().toUpperCase();
+  }
 
   if (!fromRaw && !fromResolved && !toRaw && !toResolved) return null;
 
@@ -182,14 +208,10 @@ function flattenRetiredRenameSource_(blocks, oldKey, blockNumHint) {
  *
  * Closed last row (Block Close Flag/P&L = 1, or running qty ~ 0):
  *   unit 0, runningQty 0, block = last Block Number + 1
- *   (matches the live blocks[key].block++ after blkClose)
  *
  * Open last row:
  *   unit + runningQty from Running Position Quantity
  *   block from Block Number (fallback: parse Trade Group ID)
- *   positionId / strategyType / tradeGroupId / openTs from last Block Start
- *
- * Family S: after applying the dest-ticker row, flatten acct|FROM from Notes.
  *
  * Does not write Staging or Master.
  */
@@ -212,7 +234,12 @@ function seedBlocksFromMaster() {
     if (norm) col[norm] = i;
   });
 
-  const need = ["account", "ticker", "trade type", "running position quantity"];
+  const need = [
+    "account",
+    "ticker",
+    "trade type",
+    "running position quantity",
+  ];
   for (let i = 0; i < need.length; i++) {
     if (col[need[i]] === undefined) {
       throw new Error(
@@ -222,8 +249,8 @@ function seedBlocksFromMaster() {
   }
 
   const blocks = {};
-  // acct|OLD → NEW  (inspect preview only; never stored on blocks{})
   const retiredByRename = {};
+  const posIdLastStockKey = {};
 
   for (let r = 1; r < grid.length; r++) {
     const row = grid[r];
@@ -244,7 +271,9 @@ function seedBlocksFromMaster() {
         ? row[col["block close flag/p&l"]]
         : 0;
     const startRaw =
-      col["block start flag"] !== undefined ? row[col["block start flag"]] : 0;
+      col["block start flag"] !== undefined
+        ? row[col["block start flag"]]
+        : 0;
     const isClose = closeRaw === 1 || closeRaw === "1";
     const isStart = startRaw === 1 || startRaw === "1";
 
@@ -276,9 +305,7 @@ function seedBlocksFromMaster() {
       b.positionId = String(row[col["position id"]] || b.positionId || "");
     }
     if (col["strategy type"] !== undefined && !isClose) {
-      b.strategyType = String(
-        row[col["strategy type"]] || b.strategyType || "",
-      );
+      b.strategyType = String(row[col["strategy type"]] || b.strategyType || "");
     }
 
     const flat = isClose || Math.abs(runQty) < 1e-8;
@@ -296,15 +323,25 @@ function seedBlocksFromMaster() {
       b.block = blockNum || b.block || 1;
     }
 
-    // Family S — collect rename SOURCE tokens only.
-    // WHY ENCUF closed but ISENF/SV stayed LIVE on the first pass:
-    // fromTicker used FROM_RESOLVED first. After Phase 2 alias,
-    // FROM_RESOLVED is often already the dest (ISOU / SMR), so we
-    // flattened the wrong key (or skipped because oldKey === dest key).
-    // FROM=ISENF / FROM=SV is the sheet history key that must retire.
-    // Flatten AFTER this walk so a later leftover old-ticker row cannot
-    // reopen the source key.
-    // Family S pass 2 — Position ID / Trade Group ID continuity.
+    const sc = parseSymbolChangeFromMasterRow_(row, col);
+    if (sc) {
+      const rowTkr = String(row[col["ticker"]] || "")
+        .trim()
+        .toUpperCase();
+      const destTicker = sc.toResolved || sc.toRaw || rowTkr;
+      const destSet = {};
+      if (sc.toResolved) destSet[sc.toResolved] = true;
+      if (sc.toRaw) destSet[sc.toRaw] = true;
+      if (rowTkr) destSet[rowTkr] = true;
+
+      const sources = [sc.fromRaw, sc.fromResolved];
+      for (let s = 0; s < sources.length; s++) {
+        const src = sources[s];
+        if (!src || destSet[src]) continue;
+        retiredByRename[acct + "|" + src] = destTicker;
+      }
+    }
+
     if (isStockAcctTickerKey_(key)) {
       const posId =
         col["position id"] !== undefined
@@ -324,25 +361,20 @@ function seedBlocksFromMaster() {
         posIdLastStockKey[pidKey] = key;
       }
     }
-    const sc = parseSymbolChangeFromMasterRow_(row, col);
-    if (sc) {
-      const rowTkr = String(row[col["ticker"]] || "")
-        .trim()
-        .toUpperCase();
-      const destTicker = sc.toResolved || sc.toRaw || rowTkr;
-      const destSet = {};
-      if (sc.toResolved) destSet[sc.toResolved] = true;
-      if (sc.toRaw) destSet[sc.toRaw] = true;
-      if (rowTkr) destSet[rowTkr] = true;
-
-      const sources = [sc.fromRaw, sc.fromResolved];
-      for (let s = 0; s < sources.length; s++) {
-        const src = sources[s];
-        if (!src || destSet[src]) continue;
-        retiredByRename[acct + "|" + src] = destTicker;
-      }
-    }
   }
+
+  Object.keys(FAMILY_S_TICKER_ALIASES_).forEach(function (srcTkr) {
+    const destTkr = FAMILY_S_TICKER_ALIASES_[srcTkr];
+    Object.keys(blocks).forEach(function (key) {
+      if (!isStockAcctTickerKey_(key)) return;
+      const parts = key.split("|");
+      if (parts[1] !== srcTkr) return;
+      const destKey = parts[0] + "|" + destTkr;
+      if (blocks[destKey]) {
+        retiredByRename[key] = destTkr;
+      }
+    });
+  });
 
   const retiredKeys = Object.keys(retiredByRename);
   for (let i = 0; i < retiredKeys.length; i++) {
@@ -375,8 +407,7 @@ function inspectSeedBlocksFromMaster() {
   }
 
   const blocks = seedBlocksFromMaster();
-  const retiredByRename = {};
-  const posIdLastStockKey = {};
+  const retiredByRename = SEED_RETIRED_BY_RENAME_ || {};
 
   const keys = Object.keys(blocks);
   let openCount = 0;
