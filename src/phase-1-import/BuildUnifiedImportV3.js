@@ -338,6 +338,7 @@ function buildUnifiedImportV3() {
     const missingCusipSeenTosTrades = {};
     const missingTradeEnrichmentSeen = {};
     const missingTradeEnrichmentDataGapSeen = {};
+    const icPackageEnrichCache = {};
     //  de-dupe "weak enrichment match" warnings so we don't log 4x per multi-leg trade
     const weakEnrichmentMatchSeen = {};
 
@@ -1692,51 +1693,41 @@ function buildUnifiedImportV3() {
               symForMatch,
             );
           }
-        } else if (spread === "IRON CONDOR") {
-          const icMinuteKey = [Account, dateIso, timeHHmm].join("|");
-          const icBucketSnap = (topTradeQueueByDateTime[icMinuteKey] || []).map(
-            function (it) {
-              return {
-                topSym: it.topSym,
-                qty: it.topAbsQty,
-                desc: String(it.topDesc || "").substring(0, 90),
-              };
-            },
-          );
-          pulledResult = pullTopTradeEnrichmentButterfly(
+                } else if (spread === "IRON CONDOR") {
+          const icCacheKey = [
             Account,
             dateIso,
             timeHHmm,
-            symForMatch,
-            "IRON CONDOR",
-          );
-          importIssuesAdd(
-            ctx,
-            "INFO",
-            "TosTrades",
-            "IC_ENRICH_DEBUG",
-            icMinuteKey,
-            JSON.stringify({
-              sourceRow: i + 2,
-              snapCount: icBucketSnap.length,
-              snap: icBucketSnap,
-              helperHit: !!(pulledResult && pulledResult.item),
-              why:
-                pulledResult && pulledResult.debug
-                  ? pulledResult.debug.why
-                  : "",
-              symForMatch: String(symForMatch || ""),
-            }),
-          );
-          if (!pulledResult || !pulledResult.item) {
-            pulledResult = pullTopTradeEnrichment(
+            String(symForMatch || "")
+              .trim()
+              .toUpperCase(),
+            String(qtyAbsForEnrichment),
+          ].join("|");
+
+          if (icPackageEnrichCache[icCacheKey]) {
+            pulledResult = icPackageEnrichCache[icCacheKey];
+          } else {
+            pulledResult = pullTopTradeEnrichmentIronCondor(
               Account,
-              ts,
+              dateIso,
+              timeHHmm,
               symForMatch,
+              ts,
               qtyAbsForEnrichment,
-              matchPriceForPull,
-              expectedFillCount,
             );
+            if (!pulledResult || !pulledResult.item) {
+              pulledResult = pullTopTradeEnrichment(
+                Account,
+                ts,
+                symForMatch,
+                qtyAbsForEnrichment,
+                matchPriceForPull,
+                expectedFillCount,
+              );
+            }
+            if (pulledResult && pulledResult.item) {
+              icPackageEnrichCache[icCacheKey] = pulledResult;
+            }
           }
         } else {
           pulledResult = pullTopTradeEnrichment(

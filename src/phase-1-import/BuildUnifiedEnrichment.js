@@ -639,6 +639,7 @@ function createTopTradeEnrichmentHelpers(opts) {
     timeHHmm,
     sym,
     tradeTs,
+    wantQty,
   ) {
     const acc = toStr(Account).trim().toUpperCase();
     const symU = String(sym || "")
@@ -661,6 +662,11 @@ function createTopTradeEnrichmentHelpers(opts) {
           continue;
         const descU = String(it.topDesc || "").toUpperCase();
         if (descU.indexOf("IRON CONDOR") < 0) continue;
+
+        const want = Number(wantQty);
+        const rowQty = Number(it.topAbsQty);
+        if (isFinite(want) && want > 0 && isFinite(rowQty) && rowQty !== want)
+          continue;
 
         let dist = 0;
         if (
