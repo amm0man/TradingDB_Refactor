@@ -975,8 +975,14 @@ function buildUnifiedImportV3() {
       // Only consider CLOSE-like bundles.
       if (!isCloseLikeBundle(meta.posEffect, meta.spreadRaw)) return;
 
-      // Only retag “generic” spreads (SINGLE/VERTICAL/blank).
-      if (!isRetagCandidateOriginalSpread(meta.spreadRaw)) return;
+      // Mixed TOS labels: one same-second close leg can already say
+      // IRON CONDOR while its sibling says VERTICAL. After normalizeExpKey
+      // they share this bundleKey. First-wins meta.spreadRaw is then IC,
+      // and skipping here left the VERTICAL row untagged
+      // (DT AAPL 182.5P 2023-08-04 09:07:07, DT NVDA 430C 2023-08-15 08:33:56).
+      // Still set the canonical map so decideIcRetag can retag the
+      // VERTICAL sibling. Rows whose original spread is already IC are
+      // not retag candidates and stay IC.
 
       const idxKey = makeOpenIndexKey(meta.Account, meta.sym, meta.expKey);
       const opens = openIcBundlesByAccSymExp[idxKey] || [];
