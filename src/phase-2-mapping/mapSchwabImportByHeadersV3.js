@@ -514,7 +514,7 @@ function mapSchwabImportByHeadersV3() {
         mapped[col(mappingHeaderMap, "Trade Time")] = Utilities.formatDate(
           ts,
           tz,
-          "HHmm",
+          "HH:mm",
         );
       } else {
         // Still write something readable if possible

@@ -2800,7 +2800,6 @@ function buildUnifiedImportV3() {
       "Amount",
     ];
 
-
     // Map each unified object to a positional array in header order.
     // Internal-only fields (tradeGroupKey, optType) are intentionally excluded.
     const out = [headers].concat(
@@ -2811,7 +2810,7 @@ function buildUnifiedImportV3() {
           ? Utilities.formatDate(
               r.Timestamp,
               Session.getScriptTimeZone(),
-              "yyyy-MM-dd",
+              "MM/dd/yyyy",
             )
           : (r.Date ?? ""),
         // Time derived from Timestamp — written as a value, no formula needed.
@@ -2819,7 +2818,7 @@ function buildUnifiedImportV3() {
           ? Utilities.formatDate(
               r.Timestamp,
               Session.getScriptTimeZone(),
-              "HH:mm:ss",
+              "HH:mm",
             )
           : (r.Time ?? ""),
         r.Timestamp instanceof Date && !isNaN(r.Timestamp.getTime())
@@ -2881,11 +2880,11 @@ function buildUnifiedImportV3() {
     if (timeStampColA1 > 0)
       outSh
         .getRange(1, timeStampColA1, outRowsPlanned, 1)
-        .setNumberFormat("yyyy-mm-dd hh:mm:ss");
+        .setNumberFormat("mm/dd/yyyy hh:mm:ss");
     if (dateColA1 > 0)
       outSh
         .getRange(1, dateColA1, outRowsPlanned, 1)
-        .setNumberFormat("yyyy-mm-dd");
+        .setNumberFormat("mm/dd/yyyy");
 
     // Optional debug timing (controlled by your existing Settings > Toggle TOS Import DEBUG Alerts)
     const debugTiming =

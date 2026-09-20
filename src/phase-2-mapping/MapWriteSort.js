@@ -41,6 +41,23 @@ function writeMappingRowsV3(mappingSheet, mappingHeaders, outRows) {
     mappingSheet
       .getRange(2, 1, outRows.length, mappingHeaders.length)
       .setValues(outRows);
+    if (outRows.length) {
+      mappingSheet
+        .getRange(2, 1, outRows.length, mappingHeaders.length)
+        .setValues(outRows);
+
+      const tsCol = mappingHeaders.indexOf("Trade Time Stamp") + 1;
+      const dateCol = mappingHeaders.indexOf("Trade Date") + 1;
+      const n = outRows.length;
+      if (tsCol > 0) {
+        mappingSheet
+          .getRange(2, tsCol, n, 1)
+          .setNumberFormat("mm/dd/yyyy hh:mm:ss");
+      }
+      if (dateCol > 0) {
+        mappingSheet.getRange(2, dateCol, n, 1).setNumberFormat("mm/dd/yyyy");
+      }
+    }
   }
 }
 
