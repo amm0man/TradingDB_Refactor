@@ -485,7 +485,16 @@ function createTopTradeEnrichmentHelpers(opts) {
     return { item: picked, debug: debug };
   }
 
-  function pullTopTradeEnrichmentButterfly(Account, dateIso, timeHHmm, sym) {
+  function pullTopTradeEnrichmentButterfly(
+    Account,
+    dateIso,
+    timeHHmm,
+    sym,
+    descNeedle,
+  ) {
+    const needle = String(descNeedle || "BUTTERFLY")
+      .trim()
+      .toUpperCase();
     const acc = toStr(Account).trim().toUpperCase();
     const symU = String(sym || "")
       .trim()
@@ -500,7 +509,7 @@ function createTopTradeEnrichmentHelpers(opts) {
         if (!it) continue;
         if (String(it.topSym).trim().toUpperCase() !== symU) continue;
         const descU = String(it.topDesc || "").toUpperCase();
-        if (!descU.includes("BUTTERFLY")) continue;
+        if (descU.indexOf(needle) < 0) continue;
 
         bucket.splice(i, 1);
         removeFromExactIndex(it);
@@ -510,8 +519,7 @@ function createTopTradeEnrichmentHelpers(opts) {
       if (!picks.length) return null;
 
       function addMaybe(sum, v) {
-        if (v === null || v === undefined || toStr(v).trim() === "")
-          return sum;
+        if (v === null || v === undefined || toStr(v).trim() === "") return sum;
         const n = toNum(v);
         if (isNaN(n)) return sum;
         return sum + n;
@@ -569,11 +577,9 @@ function createTopTradeEnrichmentHelpers(opts) {
         normalizeDate(minusTs),
         normalizeTime(minusTs),
       ].join("|");
-      const plusKey = [
-        acc,
-        normalizeDate(plusTs),
-        normalizeTime(plusTs),
-      ].join("|");
+      const plusKey = [acc, normalizeDate(plusTs), normalizeTime(plusTs)].join(
+        "|",
+      );
 
       if (
         (topTradeQueueByDateTime[minusKey] || []).some(
@@ -615,11 +621,127 @@ function createTopTradeEnrichmentHelpers(opts) {
     };
   }
 
+  /**
+   * IRON CONDOR: TosTop prints ONE TRD for the whole condor
+   *   "SOLD -1 IRON CONDOR SPX … @1.20"
+   * TosTrades prints four legs. Generic pull treats qty 1 + symbol as a
+   * single-leg fill and removes that TRD, so later IC SELL groups in the
+   * same minute log NO_TRD_ROWS.
+   *
+   * This helper runs FIRST. It pulls one unused TosTop row whose
+   * DESCRIPTION contains "IRON CONDOR" and whose parsed underlying
+   * matches. Two packages in the same minute (MSFT 09:43 x2) each get
+   * their own TRD.
+   */
+  function pullTopTradeEnrichmentIronCondor(
+    Account,
+    dateIso,
+    timeHHmm,
+    sym,
+    tradeTs,
+  ) {
+    const acc = toStr(Account).trim().toUpperCase();
+    const symU = String(sym || "")
+      .trim()
+      .toUpperCase();
+
+    function pickFromMinuteKey(dtKey) {
+      const bucket = topTradeQueueByDateTime[dtKey] || [];
+      let bestIdx = -1;
+      let bestDist = 999999999;
+
+      for (let i = 0; i < bucket.length; i++) {
+        const it = bucket[i];
+        if (!it) continue;
+        if (
+          String(it.topSym || "")
+            .trim()
+            .toUpperCase() !== symU
+        )
+          continue;
+        const descU = String(it.topDesc || "").toUpperCase();
+        if (descU.indexOf("IRON CONDOR") < 0) continue;
+
+        let dist = 0;
+        if (
+          tradeTs instanceof Date &&
+          !isNaN(tradeTs.getTime()) &&
+          it.topTs instanceof Date &&
+          !isNaN(it.topTs.getTime())
+        ) {
+          dist = Math.abs(it.topTs.getTime() - tradeTs.getTime());
+        }
+        if (bestIdx < 0 || dist < bestDist) {
+          bestIdx = i;
+          bestDist = dist;
+        }
+      }
+
+      if (bestIdx < 0) return null;
+      const picked = bucket.splice(bestIdx, 1)[0];
+      removeFromExactIndex(picked);
+      return picked;
+    }
+
+    const debug = {
+      requested: {
+        Account: acc,
+        dateIso: dateIso,
+        timeHHmm: timeHHmm,
+        sym: symU,
+      },
+      why: "",
+    };
+
+    const dtKey0 = [acc, dateIso, timeHHmm].join("|");
+    let picked = pickFromMinuteKey(dtKey0);
+    let minuteKeyUsed = dtKey0;
+
+    if (!picked) {
+      const baseTs = toDateObject(dateIso, timeHHmm);
+      if (baseTs instanceof Date && !isNaN(baseTs.getTime())) {
+        const minusTs = new Date(baseTs.getTime() - 60 * 1000);
+        const plusTs = new Date(baseTs.getTime() + 60 * 1000);
+        const minusKey = [
+          acc,
+          normalizeDate(minusTs),
+          normalizeTime(minusTs),
+        ].join("|");
+        const plusKey = [
+          acc,
+          normalizeDate(plusTs),
+          normalizeTime(plusTs),
+        ].join("|");
+
+        picked = pickFromMinuteKey(minusKey);
+        if (picked) minuteKeyUsed = minusKey;
+        if (!picked) {
+          picked = pickFromMinuteKey(plusKey);
+          if (picked) minuteKeyUsed = plusKey;
+        }
+      }
+    }
+
+    if (!picked) {
+      debug.why =
+        "No TosTop IRON CONDOR TRD for this symbol in minute (or ±1).";
+      debug.dtKey = dtKey0;
+      return { item: null, debug: debug };
+    }
+
+    picked.matchedBy = "ironCondorPackageMinute";
+    picked.matchedKey = minuteKeyUsed;
+    debug.why = "Matched one TosTop IRON CONDOR package TRD.";
+    debug.dtKey = minuteKeyUsed;
+    return { item: picked, debug: debug };
+  }
+
   return {
     previewTopCandidates: previewTopCandidates,
     removeFromExactIndex: removeFromExactIndex,
     pullPartialFillEnrichment_: pullPartialFillEnrichment_,
     pullTopTradeEnrichment: pullTopTradeEnrichment,
     pullTopTradeEnrichmentButterfly: pullTopTradeEnrichmentButterfly,
+    pullTopTradeEnrichmentIronCondor: pullTopTradeEnrichmentIronCondor,
   };
 }

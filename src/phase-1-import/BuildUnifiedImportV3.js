@@ -360,6 +360,8 @@ function buildUnifiedImportV3() {
     const pullTopTradeEnrichment = _enrich.pullTopTradeEnrichment;
     const pullTopTradeEnrichmentButterfly =
       _enrich.pullTopTradeEnrichmentButterfly;
+    const pullTopTradeEnrichmentIronCondor =
+      _enrich.pullTopTradeEnrichmentIronCondor;
 
     // Diagnostics (super helpful when you think “there should be a TRD row in that minute”)
     const topTrdRowsSeenByDateTime = {}; // counts ALL TosTop TRD rows per minute (parse success or fail)
@@ -1674,8 +1676,6 @@ function buildUnifiedImportV3() {
         // Primary attempt
         let pulledResult;
         if (spread === "BUTTERFLY") {
-          //  First try the standard enrichment pull (consumes ONE strategy TRD row).
-          // This supports cases like your TosTop: "BOT +1 BUTTERFLY ... @.30" appearing twice (two fills).
           pulledResult = pullTopTradeEnrichment(
             Account,
             ts,
@@ -1684,14 +1684,30 @@ function buildUnifiedImportV3() {
             matchPriceForPull,
             1,
           );
-
-          // Fallback: if TosTop represents butterfly as 1-2-1 leg TRD rows, use the old minute-sum behavior.
           if (!pulledResult || !pulledResult.item) {
             pulledResult = pullTopTradeEnrichmentButterfly(
               Account,
               dateIso,
               timeHHmm,
               symForMatch,
+            );
+          }
+        } else if (spread === "IRON CONDOR") {
+          pulledResult = pullTopTradeEnrichmentButterfly(
+            Account,
+            dateIso,
+            timeHHmm,
+            symForMatch,
+            "IRON CONDOR",
+          );
+          if (!pulledResult || !pulledResult.item) {
+            pulledResult = pullTopTradeEnrichment(
+              Account,
+              ts,
+              symForMatch,
+              qtyAbsForEnrichment,
+              matchPriceForPull,
+              expectedFillCount,
             );
           }
         } else {
