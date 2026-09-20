@@ -2066,6 +2066,11 @@ function pushTosTradesCombinedToTosTrades() {
         if (h === "Exp") return expDisplay;
         return row[idx[h]];
       });
+
+      const symJ = wanted.indexOf("Symbol");
+      if (symJ >= 0) outRow[symJ] = String(outRow[symJ] ?? "").trim();
+
+      out.push(outRow);
     }
 
     // Transaction-safe write: write new block first, then clear leftovers
@@ -2074,7 +2079,7 @@ function pushTosTradesCombinedToTosTrades() {
     const outRows = out.length;
     const outCols = out[0].length;
 
-       tosFormatHeaderColumnsAsText(
+    tosFormatHeaderColumnsAsText(
       dst,
       out[0],
       ["Symbol", "Exec Time", "Exp"],
