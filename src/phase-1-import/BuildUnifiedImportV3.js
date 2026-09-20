@@ -2800,31 +2800,6 @@ function buildUnifiedImportV3() {
       "Amount",
     ];
 
-    /** 
-        // Map each unified object to a positional array in header order.
-        // Internal-only fields (tradeGroupKey, optType) are intentionally excluded.
-        const out = [headers].concat(all.map(r => [
-          r.Account ?? '',
-          r.Date ?? '',
-          r.Time ?? '',
-          r.Timestamp instanceof Date && !isNaN(r.Timestamp.getTime()) ? r.Timestamp : '',
-          r.Action ?? '',
-          r.Symbol ?? '',
-          r.Description ?? '',
-          r.Spread ?? '',
-          r.Quantity ?? '',
-          r.Price ?? '',
-          r.NetPrice ?? '',
-          r.Side ?? '',
-          r.PosEffect ?? '',
-          r.Exp ?? '',
-          r.Strike ?? '',
-          r.OrderType ?? '',
-          r.MiscFees ?? '',
-          r.FeesComm ?? '',
-          r.Amount ?? ''
-        ]));
-    */
 
     // Map each unified object to a positional array in header order.
     // Internal-only fields (tradeGroupKey, optType) are intentionally excluded.
@@ -2859,7 +2834,7 @@ function buildUnifiedImportV3() {
         r.NetPrice ?? "",
         r.Side ?? "",
         r.PosEffect ?? "",
-        r.Exp ?? "",
+        formatExpForSchwabImport(r.Exp),
         r.Strike ?? "",
         r.OrderType ?? "",
         r.MiscFees ?? "",

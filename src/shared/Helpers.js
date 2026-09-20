@@ -379,3 +379,120 @@ function toDateObject(yyyyMmDd, hhmmOrHhmmss) {
   const dt = new Date(yyyy, mm - 1, dd, HH, MIN, SS, 0);
   return isNaN(dt.getTime()) ? null : dt;
 }
+
+/**
+ * formatExpForSchwabImport
+ *
+ * Display-only. Turns the many TOS / Sheets Exp spellings into one
+ * plain-text value for the Schwab Import Exp column:
+ *   29-Aug-23
+ *
+ * Does not rewrite Symbol. Does not change Combined / TosTrades.
+ * Unparseable values are returned trimmed as-is (never blanked).
+ */
+function formatExpForSchwabImport(raw) {
+  const parts = parseExpYearMonthDay_(raw);
+  if (!parts) return toStr(raw).trim();
+
+  const mon = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  return (
+    String(parts.day) +
+    "-" +
+    mon[parts.month - 1] +
+    "-" +
+    String(parts.year).slice(-2)
+  );
+}
+
+function parseExpYearMonthDay_(raw) {
+  if (raw instanceof Date && !isNaN(raw.getTime())) {
+    return {
+      year: raw.getFullYear(),
+      month: raw.getMonth() + 1,
+      day: raw.getDate(),
+    };
+  }
+
+  const s = toStr(raw).trim();
+  if (!s) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return {
+      year: parseInt(s.substring(0, 4), 10),
+      month: parseInt(s.substring(5, 7), 10),
+      day: parseInt(s.substring(8, 10), 10),
+    };
+  }
+
+  const monNum = {
+    JAN: 1,
+    JANUARY: 1,
+    FEB: 2,
+    FEBRUARY: 2,
+    MAR: 3,
+    MARCH: 3,
+    APR: 4,
+    APRIL: 4,
+    MAY: 5,
+    JUN: 6,
+    JUNE: 6,
+    JUL: 7,
+    JULY: 7,
+    AUG: 8,
+    AUGUST: 8,
+    SEP: 9,
+    SEPTEMBER: 9,
+    OCT: 10,
+    OCTOBER: 10,
+    NOV: 11,
+    NOVEMBER: 11,
+    DEC: 12,
+    DECEMBER: 12,
+  };
+
+  function ymd(yearRaw, monthNum, dayRaw) {
+    let year = parseInt(yearRaw, 10);
+    const month = Number(monthNum);
+    const day = parseInt(dayRaw, 10);
+    if (year < 100) year += 2000;
+    if (!year || month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return { year: year, month: month, day: day };
+  }
+
+  // 8/29/2023  or  8/29/23  (expired rows)
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) return ymd(m[3], parseInt(m[1], 10), m[2]);
+
+  const u = s.toUpperCase();
+
+  // 29 Aug 23 / 29-Aug-23 / 29 August 23 / 29-August-23
+  m = u.match(/^(\d{1,2})[-\s\/]+([A-Z]{3,9})[-\s\/]+(\d{2,4})$/);
+  if (m && monNum[m[2]]) return ymd(m[3], monNum[m[2]], m[1]);
+
+  // 29Aug23 / 8September23 (no separator)
+  m = u.match(/^(\d{1,2})([A-Z]{3,9})(\d{2,4})$/);
+  if (m && monNum[m[2]]) return ymd(m[3], monNum[m[2]], m[1]);
+
+  const d = new Date(s);
+  if (d instanceof Date && !isNaN(d.getTime())) {
+    return {
+      year: d.getFullYear(),
+      month: d.getMonth() + 1,
+      day: d.getDate(),
+    };
+  }
+  return null;
+}
