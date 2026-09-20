@@ -1954,6 +1954,7 @@ function pushTosTradesCombinedToTosTrades() {
     if (resp !== ui.Button.OK) return;
 
     const values = src.getDataRange().getValues();
+    const displays = src.getDataRange().getDisplayValues();
     if (values.length < 2)
       throw new Error("No data found in " + tosConfig.tradesCombinedSheetName);
 
@@ -2013,38 +2014,41 @@ function pushTosTradesCombinedToTosTrades() {
 
       ctx.metrics.SourceNonBlankRows++;
 
-      // ── Exec Time: parse stored "yyyy-MM-dd HHmmss" or "yyyy-MM-dd HH:mm:ss" → real Date ──
-      const execRaw = row[idx["Exec Time"]];
-      let execDate = null;
+      // Copy the Combined *display* for Exec Time and Exp.
+      // getValues() Dates + UTC rebuild were attaching the previous
+      // row's clock/Exp (TosTrades 6910 = SPX 4515 body + CCJ 10:19 / 19-Jan-24).
+      const execDisplay = String(displays[r][idx["Exec Time"]] || "").trim();
+      const expDisplay = String(displays[r][idx["Exp"]] || "").trim();
 
-      if (typeof execRaw === "string" && execRaw.trim()) {
-        const s = execRaw.trim();
-        // Accept both "2023-03-09 083044" and "2023-03-09 08:30:44"
-        const m = s.match(
-          /^(\d{4})-(\d{2})-(\d{2})[\s\t]+(\d{2}):?(\d{2}):?(\d{2})$/,
-        );
-        if (m) {
-          const [, yyyy, MM, dd, HH, MIN, SS] = m.map(Number);
-          execDate = new Date(yyyy, MM - 1, dd, HH, MIN, SS, 0);
-          if (isNaN(execDate.getTime()) || execDate.getFullYear() < 2000)
-            execDate = null;
-        }
+      let execOut = "";
+      const execRaw = row[idx["Exec Time"]];
+      const mIso = execDisplay.match(
+        /^(\d{4})-(\d{2})-(\d{2})[\s\t]+(\d{2}):(\d{2})(?::(\d{2}))?/,
+      );
+      if (mIso) {
+        execOut =
+          mIso[1] +
+          "-" +
+          mIso[2] +
+          "-" +
+          mIso[3] +
+          " " +
+          mIso[4] +
+          ":" +
+          mIso[5] +
+          ":" +
+          (mIso[6] || "00");
+      } else if (typeof execRaw === "string" && execRaw.trim()) {
+        execOut = execRaw.trim();
       } else if (execRaw instanceof Date && !isNaN(execRaw.getTime())) {
-        // Sheets-coerced Date: read UTC fields to recover original wall-clock time
-        const yyyy = execRaw.getUTCFullYear();
-        const MM = execRaw.getUTCMonth() + 1;
-        const dd = execRaw.getUTCDate();
-        const HH = execRaw.getUTCHours();
-        const MIN = execRaw.getUTCMinutes();
-        const SS = execRaw.getUTCSeconds();
-        if (yyyy >= 2000) {
-          execDate = new Date(yyyy, MM - 1, dd, HH, MIN, SS, 0);
-          if (isNaN(execDate.getTime()) || execDate.getFullYear() < 2000)
-            execDate = null;
-        }
+        execOut = Utilities.formatDate(
+          execRaw,
+          Session.getScriptTimeZone(),
+          "yyyy-MM-dd HH:mm:ss",
+        );
       }
 
-      if (!execDate) {
+      if (!execOut) {
         importIssuesAdd(
           ctx,
           "BAD_EXEC_TIME_TYPE",
@@ -2052,21 +2056,16 @@ function pushTosTradesCombinedToTosTrades() {
           r + 1,
           "Exec Time",
           String(execRaw ?? ""),
-          `Could not parse Exec Time to Date. type=${typeof execRaw}, value="${execRaw}"`,
+          `Could not parse Exec Time. type=${typeof execRaw}, display="${execDisplay}"`,
         );
         continue;
       }
 
       const outRow = wanted.map((h) => {
-        if (h === "Exec Time") return execDate;
+        if (h === "Exec Time") return execOut;
+        if (h === "Exp") return expDisplay;
         return row[idx[h]];
       });
-
-      // Defensive: ensure Symbol is always a string in-memory
-      const symJ = wanted.indexOf("Symbol");
-      if (symJ >= 0) outRow[symJ] = String(outRow[symJ] ?? "").trim();
-
-      out.push(outRow);
     }
 
     // Transaction-safe write: write new block first, then clear leftovers
@@ -2075,15 +2074,20 @@ function pushTosTradesCombinedToTosTrades() {
     const outRows = out.length;
     const outCols = out[0].length;
 
-    // CRITICAL: preserve leading zeros (CUSIP-like Symbols) by forcing Symbol to text BEFORE setValues.
-    tosFormatHeaderColumnAsText(dst, out[0], "Symbol", outRows, 1);
+       tosFormatHeaderColumnsAsText(
+      dst,
+      out[0],
+      ["Symbol", "Exec Time", "Exp"],
+      outRows,
+      1,
+    );
 
-    // Now write the output values
     dst.getRange(1, 1, outRows, outCols).setValues(out);
 
-    // Format Exec Time column as datetime so the Date object displays readably
-    if (outRows > 1)
+    // Keep Exec Time readable, but Exp must stay the TOS text ("31 Aug 23").
+    if (outRows > 1) {
       dst.getRange(2, 2, outRows - 1, 1).setNumberFormat("yyyy-mm-dd hh:mm:ss");
+    }
 
     if (prevLastRow > outRows) {
       dst
