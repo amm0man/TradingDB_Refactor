@@ -702,3 +702,294 @@ function classifyNegSpxByPositionId() {
       " Position ID / option keys. See NEG_SPX By Position ID and NEG_SPX Rows.",
   );
 }
+
+/**
+ * classifyNetAmountIcWarns
+ *
+ * Read-only. Explains the 10 Phase 2 "Missing Net Amount" IRON CONDOR WARNs.
+ *
+ * Writes sheet: "IC NetAmount Classify"
+ *
+ * HOW TO RUN:
+ *   clasp push
+ *   Apps Script editor → classifyNetAmountIcWarns → Run
+ */
+function classifyNetAmountIcWarns() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const issues = ss.getSheetByName("Schwab Mapping Issues");
+  const imp = ss.getSheetByName("Schwab Import");
+  const map = ss.getSheetByName("Schwab Mapping");
+  if (!issues || !imp || !map) {
+    uiAlertSafe("Need Schwab Mapping Issues + Schwab Import + Schwab Mapping.");
+    return;
+  }
+
+  function headerMap(row) {
+    const m = {};
+    for (let i = 0; i < row.length; i++) {
+      const h = String(row[i] || "").trim();
+      if (h && m[h] == null) m[h] = i;
+    }
+    return m;
+  }
+  function cell(row, idx) {
+    return idx == null || idx < 0 ? "" : row[idx];
+  }
+  function typeOf(v) {
+    if (v === "" || v == null) return "blank";
+    if (v instanceof Date && !isNaN(v.getTime())) return "Date";
+    return typeof v;
+  }
+  function toMs(d) {
+    return d instanceof Date && !isNaN(d) ? d.getTime() : "";
+  }
+  function expKey(v) {
+    if (v instanceof Date && !isNaN(v.getTime())) {
+      return Utilities.formatDate(
+        v,
+        ss.getSpreadsheetTimeZone(),
+        "yyyy-MM-dd",
+      );
+    }
+    const s = String(v || "").trim();
+    if (!s) return "";
+    const d = new Date(s);
+    if (d instanceof Date && !isNaN(d.getTime())) {
+      return Utilities.formatDate(
+        d,
+        ss.getSpreadsheetTimeZone(),
+        "yyyy-MM-dd",
+      );
+    }
+    return s;
+  }
+
+  const issueVals = issues.getDataRange().getValues();
+  const iH = headerMap(issueVals[0]);
+  const warns = [];
+  for (let r = 1; r < issueVals.length; r++) {
+    const row = issueVals[r];
+    const field = String(cell(row, iH["Field"]) || "").trim();
+    const kind = String(cell(row, iH["Kind"]) || "").trim().toUpperCase();
+    if (field !== "Net Amount") continue;
+    if (kind && kind !== "WARN") continue;
+    warns.push({
+      sourceRow: Number(cell(row, iH["SourceRow"])),
+      meta: String(cell(row, iH["Meta"]) || ""),
+      runId: String(cell(row, iH["RunId"]) || ""),
+    });
+  }
+
+  const impVals = imp.getDataRange().getValues();
+  const impDisp = imp.getDataRange().getDisplayValues();
+  const pH = headerMap(impVals[0]);
+  const mapVals = map.getDataRange().getValues();
+  const mapDisp = map.getDataRange().getDisplayValues();
+  const mH = headerMap(mapVals[0]);
+
+  const outHeaders = [
+    "Verdict",
+    "IssuesSourceRow_Import",
+    "Account",
+    "ImportTimeStamp_display",
+    "Symbol",
+    "Spread",
+    "ImportLegCount",
+    "ImportAmountFilledCount",
+    "ImportAmountValues",
+    "MappingLegCount_sameTsTicker",
+    "MappingNetFilledCount",
+    "MappingNetValues",
+    "Phase2Key_toMs_distinct",
+    "StableKey_yyyyMMdd_distinct",
+    "ExpTypes",
+    "TsTypes",
+    "MappingRows",
+    "ExpDisplays",
+    "Meta",
+  ];
+  const body = [];
+
+  for (let w = 0; w < warns.length; w++) {
+    const src = warns[w].sourceRow;
+    if (!src || src < 2 || src > impVals.length) {
+      body.push([
+        "BAD_SOURCE_ROW",
+        src,
+        "",
+        "",
+        "",
+        "",
+        0,
+        0,
+        "",
+        0,
+        0,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        warns[w].meta,
+      ]);
+      continue;
+    }
+
+    const iRow = impVals[src - 1];
+    const acct = String(cell(iRow, pH["Account"]) || "").trim().toUpperCase();
+    const tsDisp = String(impDisp[src - 1][pH["Time Stamp"]] || "");
+    const sym = String(cell(iRow, pH["Symbol"]) || "").trim();
+    const spread = String(cell(iRow, pH["Spread"]) || "").trim().toUpperCase();
+    const dateDisp = String(impDisp[src - 1][pH["Date"]] || "");
+    const timeDisp = String(impDisp[src - 1][pH["Time"]] || "");
+
+    const importLegs = [];
+    for (let r = 1; r < impVals.length; r++) {
+      const row = impVals[r];
+      if (String(cell(row, pH["Account"]) || "").trim().toUpperCase() !== acct)
+        continue;
+      if (String(cell(row, pH["Spread"]) || "").trim().toUpperCase() !== "IRON CONDOR")
+        continue;
+      const d = String(impDisp[r][pH["Date"]] || "");
+      const t = String(impDisp[r][pH["Time"]] || "");
+      const s = String(cell(row, pH["Symbol"]) || "").trim();
+      if (d !== dateDisp || t !== timeDisp) continue;
+      if (s !== sym) continue;
+      importLegs.push({
+        sheetRow: r + 1,
+        amount: cell(row, pH["Amount"]),
+        amountDisp: String(impDisp[r][pH["Amount"]] || ""),
+        expDisp: String(impDisp[r][pH["Exp"]] || ""),
+      });
+    }
+
+    const tickerGuess = String(cell(mapVals[Math.min(src - 1, mapVals.length - 1)][mH["Ticker"]] || "") || "").trim();
+    // Mapping rows: same account + same Trade Date display + same ticker family
+    const mapLegs = [];
+    for (let r = 1; r < mapVals.length; r++) {
+      const row = mapVals[r];
+      if (String(cell(row, mH["Account"]) || "").trim().toUpperCase() !== acct)
+        continue;
+      const st = String(cell(row, mH["Strategy Type"]) || "").toUpperCase();
+      const desc = String(cell(row, mH["Description"]) || "").toUpperCase();
+      const isIc =
+        st.indexOf("IC") >= 0 ||
+        desc.indexOf("IRON CONDOR") >= 0;
+      if (!isIc) continue;
+      const md = String(mapDisp[r][mH["Trade Date"]] || "");
+      const mt = String(mapDisp[r][mH["Trade Time"]] || "");
+      // Trade Time on Mapping is HHmm; Import Time display may be HH:mm:ss
+      const wantHHmm = String(timeDisp || "").replace(/\D/g, "").substring(0, 4);
+      if (md !== dateDisp && String(mapDisp[r][mH["Trade Date"]] || "") !== dateDisp)
+        continue;
+      if (wantHHmm && mt && String(mt) !== wantHHmm) continue;
+      mapLegs.push({
+        sheetRow: r + 1,
+        ticker: String(cell(row, mH["Ticker"]) || ""),
+        net: cell(row, mH["Net Amount"]),
+        netDisp: String(mapDisp[r][mH["Net Amount"]] || ""),
+        exp: cell(row, mH["Option Expiration"]),
+        expDisp: String(mapDisp[r][mH["Option Expiration"]] || ""),
+        ts: cell(row, mH["Trade Time Stamp"]),
+        tsType: typeOf(cell(row, mH["Trade Time Stamp"])),
+        expType: typeOf(cell(row, mH["Option Expiration"])),
+        phase2Key:
+          "IRON CONDOR|" +
+          toMs(cell(row, mH["Trade Time Stamp"])) +
+          "|" +
+          String(cell(row, mH["Ticker"]) || "") +
+          "|" +
+          toMs(cell(row, mH["Option Expiration"])),
+        stableKey:
+          "IRON CONDOR|" +
+          expKey(cell(row, mH["Trade Time Stamp"])) +
+          "|" +
+          String(mapDisp[r][mH["Trade Time"]] || "") +
+          "|" +
+          String(cell(row, mH["Ticker"]) || "") +
+          "|" +
+          expKey(cell(row, mH["Option Expiration"])),
+      });
+    }
+
+    function uniq(arr) {
+      const o = {};
+      for (let i = 0; i < arr.length; i++) o[String(arr[i])] = true;
+      return Object.keys(o);
+    }
+
+    const importFilled = importLegs.filter(function (L) {
+      return String(L.amountDisp || "").trim() !== "";
+    });
+    const mapFilled = mapLegs.filter(function (L) {
+      return String(L.netDisp || "").trim() !== "";
+    });
+    const p2keys = uniq(mapLegs.map(function (L) { return L.phase2Key; }));
+    const stkeys = uniq(mapLegs.map(function (L) { return L.stableKey; }));
+
+    let verdict = "SPOT_CHECK";
+    if (!importLegs.length) verdict = "NO_IMPORT_IC_LEGS";
+    else if (!importFilled.length && !mapFilled.length) verdict = "BLANK_ON_IMPORT";
+    else if (importFilled.length && p2keys.length > 1 && stkeys.length === 1)
+      verdict = "KEY_SPLIT";
+    else if (importFilled.length && !mapFilled.length) verdict = "IMPORT_HAS_AMOUNT_MAPPING_BLANK";
+    else if (importFilled.length && mapFilled.length && p2keys.length > 1)
+      verdict = "KEY_SPLIT_PARTIAL";
+    else if (importFilled.length && mapFilled.length) verdict = "SHOULD_NOT_WARN";
+
+    body.push([
+      verdict,
+      src,
+      acct,
+      tsDisp,
+      sym,
+      spread,
+      importLegs.length,
+      importFilled.length,
+      importLegs
+        .map(function (L) {
+          return "R" + L.sheetRow + "=" + (L.amountDisp || "(blank)");
+        })
+        .join(" | "),
+      mapLegs.length,
+      mapFilled.length,
+      mapLegs
+        .map(function (L) {
+          return "R" + L.sheetRow + "=" + (L.netDisp || "(blank)");
+        })
+        .join(" | "),
+      p2keys.length + " :: " + p2keys.join(" || "),
+      stkeys.length + " :: " + stkeys.join(" || "),
+      uniq(mapLegs.map(function (L) { return L.expType; })).join(","),
+      uniq(mapLegs.map(function (L) { return L.tsType; })).join(","),
+      mapLegs.map(function (L) { return L.sheetRow; }).join(","),
+      uniq(mapLegs.map(function (L) { return L.expDisp; })).join(" | "),
+      warns[w].meta,
+    ]);
+  }
+
+  let out = ss.getSheetByName("IC NetAmount Classify");
+  if (!out) out = ss.insertSheet("IC NetAmount Classify");
+  out.clear();
+  out.getRange(1, 1, 1, outHeaders.length).setValues([outHeaders]);
+  if (body.length) {
+    out.getRange(2, 1, body.length, outHeaders.length).setValues(body);
+  }
+  out.setFrozenRows(1);
+  out.autoResizeColumns(1, Math.min(8, outHeaders.length));
+
+  const counts = {};
+  for (let i = 0; i < body.length; i++) {
+    const v = String(body[i][0]);
+    counts[v] = (counts[v] || 0) + 1;
+  }
+  uiAlertSafe(
+    "IC Net Amount WARNs classified: " +
+      body.length +
+      "  " +
+      JSON.stringify(counts) +
+      "  See sheet IC NetAmount Classify.",
+  );
+}

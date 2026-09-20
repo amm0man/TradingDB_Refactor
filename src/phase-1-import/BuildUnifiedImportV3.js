@@ -1239,17 +1239,9 @@ function buildUnifiedImportV3() {
       //
       // Therefore, for multi-leg options spreads we MUST include Exp (and Type) in the group identity,
       // otherwise different expirations collide and you get summed fees/amount (-235) on one spread.
-      // Build expKey for group identity
-      let expKey = "";
-      if (exp instanceof Date) {
-        expKey = Utilities.formatDate(
-          exp,
-          Session.getScriptTimeZone(),
-          "yyyy-MM-dd",
-        );
-      } else {
-        expKey = toStr(exp).trim();
-      }
+      // Must use the same normalizeExpKey as the 6A/6B IC maps.
+      // Date vs "4 Aug 23" vs "4 August 23" vs "18-Aug-23" must be one key.
+      const expKey = normalizeExpKey(exp);
 
       // ---------------------------- IC retagging — now one clean call to the new helper ----------------------------
       const spreadOriginal = spread;
@@ -1693,7 +1685,7 @@ function buildUnifiedImportV3() {
               symForMatch,
             );
           }
-                } else if (spread === "IRON CONDOR") {
+        } else if (spread === "IRON CONDOR") {
           const icCacheKey = [
             Account,
             dateIso,

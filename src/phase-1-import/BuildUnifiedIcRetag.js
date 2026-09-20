@@ -75,8 +75,7 @@ function createIcRetagHelpers(opts) {
 
     if (!wantsIc) return spreadOriginal; // no change
 
-    if (!isRetagCandidateOriginalSpread(spreadOriginal))
-      return spreadOriginal;
+    if (!isRetagCandidateOriginalSpread(spreadOriginal)) return spreadOriginal;
     if (!isCloseLikeBundle(posEffect, spreadOriginal)) return spreadOriginal;
 
     const legsSorted = setToSortedArray(
@@ -139,13 +138,7 @@ function createIcRetagHelpers(opts) {
 
   // Bundle key = one execution “bundle” (same timestamp/account/symbol/exp/posEffect).
   // We intentionally include Exp so we don’t accidentally tie a CLOSE to the wrong expiry.
-  function makeLifecycleBundleKey(
-    Account,
-    ts,
-    symForMatch,
-    expKey,
-    posEffect,
-  ) {
+  function makeLifecycleBundleKey(Account, ts, symForMatch, expKey, posEffect) {
     const acc = String(Account || "")
       .trim()
       .toUpperCase();
@@ -207,15 +200,69 @@ function createIcRetagHelpers(opts) {
     ].join("|");
   }
 
-  // Helper: normalize exp into a stable string used in keys
+  // Helper: normalize exp into a stable yyyy-MM-dd used in IC / bundle keys.
+  // TosTrades Exp after the text Push can be:
+  //   Date, 4 Aug 23, 4-Aug-23, 4 August 23, 18-Aug-23, 2023-08-04
+  // Raw toStr() kept those as different keys, so one close vertical
+  // inherited IRON CONDOR and its same-second sibling stayed VERTICAL.
   function normalizeExpKey(expRaw) {
-    if (expRaw instanceof Date)
+    if (expRaw instanceof Date && !isNaN(expRaw.getTime())) {
       return Utilities.formatDate(
         expRaw,
         Session.getScriptTimeZone(),
         "yyyy-MM-dd",
       );
-    return toStr(expRaw).trim();
+    }
+
+    const s = toStr(expRaw).trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+
+    const u = s.toUpperCase();
+    const mon = {
+      JAN: "01",
+      JANUARY: "01",
+      FEB: "02",
+      FEBRUARY: "02",
+      MAR: "03",
+      MARCH: "03",
+      APR: "04",
+      APRIL: "04",
+      MAY: "05",
+      JUN: "06",
+      JUNE: "06",
+      JUL: "07",
+      JULY: "07",
+      AUG: "08",
+      AUGUST: "08",
+      SEP: "09",
+      SEPTEMBER: "09",
+      OCT: "10",
+      OCTOBER: "10",
+      NOV: "11",
+      NOVEMBER: "11",
+      DEC: "12",
+      DECEMBER: "12",
+    };
+
+    const m = u.match(/^(\d{1,2})[-\s\/]+([A-Z]{3,9})[-\s\/]+(\d{2,4})$/);
+    if (m && mon[m[2]]) {
+      let yyyy = parseInt(m[3], 10);
+      if (yyyy < 100) yyyy += 2000;
+      return (
+        String(yyyy) +
+        "-" +
+        mon[m[2]] +
+        "-" +
+        String(parseInt(m[1], 10)).padStart(2, "0")
+      );
+    }
+
+    const d = new Date(s);
+    if (d instanceof Date && !isNaN(d.getTime())) {
+      return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    }
+    return s;
   }
 
   // Some spreads (like IRON CONDOR) contain BOTH CALL and PUT legs but have ONE TosTop TRD row.
