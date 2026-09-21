@@ -336,8 +336,75 @@ function tosImportBothSectionsFromFolderCurrentAccount() {
 function tosImportBothSectionsFromFolderBothAccounts() {
   const tBoth = pipelineTimingNow();
   try {
-    tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
-    tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+    const dt = tosImportBothSectionsFromFolder(
+      tosGetAccountFolderIdPropKey("DT"),
+      "DT",
+      { skipWrite: true },
+    );
+    const lt = tosImportBothSectionsFromFolder(
+      tosGetAccountFolderIdPropKey("LT"),
+      "LT",
+      { skipWrite: true },
+    );
+
+    const tradesHeader =
+      (dt && dt.tradesHeader) || (lt && lt.tradesHeader) || null;
+    const topHeader = (dt && dt.topHeader) || (lt && lt.topHeader) || null;
+    const tradesAllRows = []
+      .concat((dt && dt.tradesAllRows) || [])
+      .concat((lt && lt.tradesAllRows) || []);
+    const topRowsAll = []
+      .concat((dt && dt.topRowsAll) || [])
+      .concat((lt && lt.topRowsAll) || []);
+    const fileCount =
+      Number((dt && dt.fileCount) || 0) + Number((lt && lt.fileCount) || 0);
+
+    const tradesCtx = importIssuesStart(
+      "tosImportBothSectionsFromFolder:TradesBoth",
+    );
+    const topCtx = importIssuesStart("tosImportBothSectionsFromFolder:TopBoth");
+    importIssuesSetMetric(tradesCtx, "Account", "DT+LT");
+    importIssuesSetMetric(topCtx, "Account", "DT+LT");
+    importIssuesSetMetric(
+      tradesCtx,
+      "OutputSheet",
+      tosConfig.tradesCombinedSheetName,
+    );
+    importIssuesSetMetric(topCtx, "OutputSheet", tosConfig.topCombinedSheetName);
+
+    const tWriteTrades = pipelineTimingNow();
+    tosTradesWriteCombinedFromParsed(
+      tradesCtx,
+      "DT+LT",
+      "",
+      "DT+LT",
+      fileCount,
+      tradesAllRows,
+      tradesHeader,
+      { replaceEntireSheet: true },
+    );
+    pipelineTimingLog(
+      "tosImportBothSectionsFromFolder writeTrades",
+      tWriteTrades,
+      "Account=DT+LT rows=" + tradesAllRows.length,
+    );
+
+    const tWriteTop = pipelineTimingNow();
+    tosTopWriteCombinedFromParsed(
+      topCtx,
+      "DT+LT",
+      "",
+      "DT+LT",
+      fileCount,
+      topRowsAll,
+      topHeader,
+      { replaceEntireSheet: true },
+    );
+    pipelineTimingLog(
+      "tosImportBothSectionsFromFolder writeTop",
+      tWriteTop,
+      "Account=DT+LT rows=" + topRowsAll.length,
+    );
   } finally {
     pipelineTimingLog("tosImportBothSectionsFromFolderBothAccounts", tBoth);
   }
@@ -351,7 +418,9 @@ function tosImportBothSectionsFromFolderBothAccounts() {
  * Not wired into tosRunFullTosToSchwabImportBothAccounts until Combined
  * row counts match a two-walk run.
  */
-function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
+function tosImportBothSectionsFromFolder(folderIdPropKey, Account, options) {
+  options = options || {};
+  const skipWrite = options.skipWrite === true;
   const tStep = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -461,6 +530,21 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
         " topRows=" +
         topRowsAll.length,
     );
+
+       if (skipWrite) {
+      importIssuesFlush(tradesCtx);
+      importIssuesFlush(topCtx);
+      return {
+        Account: Account || "",
+        folderIdPropKey: folderIdPropKey || "",
+        folderName: folderName || "",
+        fileCount: csvFiles.length,
+        tradesAllRows: tradesAllRows,
+        tradesHeader: tradesHeader,
+        topRowsAll: topRowsAll,
+        topHeader: topHeader,
+      };
+    }
 
     const tWriteTrades = pipelineTimingNow();
     tosTradesWriteCombinedFromParsed(
@@ -877,7 +961,9 @@ function tosTradesWriteCombinedFromParsed(
   fileCount,
   allRows,
   canonicalHeader,
+  options,
 ) {
+  options = options || {};
   if (!canonicalHeader) {
     importIssuesAdd(
       ctx,
@@ -1089,7 +1175,9 @@ function tosTradesWriteCombinedFromParsed(
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = tosGetOrCreateSheet(ss, tosConfig.tradesCombinedSheetName);
-  const finalOut = tosMergeAccountLabeledCombined(sh, newOut, Account);
+    const finalOut = options.replaceEntireSheet
+    ? newOut
+    : tosMergeAccountLabeledCombined(sh, newOut, Account);
 
   sh.clearContents();
   tosFormatHeaderColumnAsText(sh, finalOut[0], "Symbol", finalOut.length, 1);
@@ -1196,7 +1284,9 @@ function tosTopWriteCombinedFromParsed(
   fileCount,
   rowsAll,
   canonicalHeader,
+  options,
 ) {
+  options = options || {};
   if (!canonicalHeader) {
     importIssuesAdd(
       ctx,
@@ -1313,7 +1403,9 @@ function tosTopWriteCombinedFromParsed(
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = tosGetOrCreateSheet(ss, tosConfig.topCombinedSheetName);
-  const finalOut = tosMergeAccountLabeledCombined(sh, newOut, Account);
+   const finalOut = options.replaceEntireSheet
+    ? newOut
+    : tosMergeAccountLabeledCombined(sh, newOut, Account);
 
   const fiDateCol = finalOut[0].indexOf("DATE");
   const fiTimeCol = finalOut[0].indexOf("TIME");
