@@ -40,23 +40,13 @@ function writeMappingRowsV3(mappingSheet, mappingHeaders, outRows) {
   }
 
   if (outRows.length) {
-    const tSet1 = pipelineTimingNow();
+    const tSet = pipelineTimingNow();
     mappingSheet
       .getRange(2, 1, outRows.length, mappingHeaders.length)
       .setValues(outRows);
     pipelineTimingLog(
-      "writeMappingRowsV3 setValues1",
-      tSet1,
-      "rows=" + outRows.length,
-    );
-
-    const tSet2 = pipelineTimingNow();
-    mappingSheet
-      .getRange(2, 1, outRows.length, mappingHeaders.length)
-      .setValues(outRows);
-    pipelineTimingLog(
-      "writeMappingRowsV3 setValues2",
-      tSet2,
+      "writeMappingRowsV3 setValues",
+      tSet,
       "rows=" + outRows.length,
     );
 
@@ -75,7 +65,11 @@ function writeMappingRowsV3(mappingSheet, mappingHeaders, outRows) {
     pipelineTimingLog("writeMappingRowsV3 numberFormat", tFmt, "rows=" + n);
   }
 
-  pipelineTimingLog("writeMappingRowsV3", tWriteFn, "rows=" + outRows.length);
+  pipelineTimingLog(
+    "writeMappingRowsV3",
+    tWriteFn,
+    "rows=" + outRows.length,
+  );
 }
 
 /** Make a compact "A=3 | B=10 | C=1" metric string (sorted by count desc). */
