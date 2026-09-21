@@ -2076,7 +2076,7 @@ function buildUnifiedImportV3() {
 
     applyFeesToTopLegRuleB(unifiedTrades);
 
-        pipelineTimingLog(
+    pipelineTimingLog(
       "buildUnifiedImportV3 main",
       tMain,
       "unifiedTrades=" + unifiedTrades.length,
@@ -2806,6 +2806,7 @@ function buildUnifiedImportV3() {
 
     pipelineTimingLog("buildUnifiedImportV3 sort", tSort, "all=" + all.length);
     const tWrite = pipelineTimingNow();
+    const tAssemble = pipelineTimingNow();
 
     const outSh = mustGetSheet("Schwab Import");
     const prevLastRow = outSh.getLastRow();
@@ -2879,6 +2880,13 @@ function buildUnifiedImportV3() {
       ]),
     );
 
+    pipelineTimingLog(
+      "buildUnifiedImportV3 assemble",
+      tAssemble,
+      "outRows=" + out.length,
+    );
+    const tFmt = pipelineTimingNow();
+
     // IMPORTANT DOWNSTREAM GUIDE FOR BLOCK LOGIC / VALIDATIONS / P&L (copy/paste this into your helper if you want)
     // For every synthetic STOCK row created from EXERCISE/ASSIGN:
     // if (row.Spread === 'STOCK' && row.Description.includes('Synthetic STOCK leg from')) {
@@ -2922,6 +2930,12 @@ function buildUnifiedImportV3() {
       outSh
         .getRange(1, dateColA1, outRowsPlanned, 1)
         .setNumberFormat("mm/dd/yyyy");
+    pipelineTimingLog(
+      "buildUnifiedImportV3 format",
+      tFmt,
+      "outRows=" + out.length,
+    );
+    const tSet = pipelineTimingNow();
 
     // Optional debug timing (controlled by your existing Settings > Toggle TOS Import DEBUG Alerts)
     const debugTiming =
@@ -2932,10 +2946,16 @@ function buildUnifiedImportV3() {
       const writeMs = new Date() - startWrite;
       importIssuesSetMetric(ctx, "WriteTimeMs", writeMs);
       tosMaybeDebugAlert("Write to Schwab Import took " + writeMs + " ms");
-    } else {
+      } else {
       // normal fast path
       outSh.getRange(1, 1, out.length, headers.length).setValues(out);
     }
+    pipelineTimingLog(
+      "buildUnifiedImportV3 setValues",
+      tSet,
+      "outRows=" + out.length,
+    );
+    const tCheck = pipelineTimingNow();
 
     // Restore Date/Time formulas derived from Timestamp (Timestamp is column D).
     // outSh.getRange('B2').setFormula('=ARRAYFORMULA(IF($D2:$D="",,INT($D2:$D)))');
@@ -2949,8 +2969,8 @@ function buildUnifiedImportV3() {
       2,
       "buildUnifiedImportV3 → Schwab Import",
     );
-
-        pipelineTimingLog(
+    pipelineTimingLog("buildUnifiedImportV3 checkDateTime", tCheck);
+    pipelineTimingLog(
       "buildUnifiedImportV3 write",
       tWrite,
       "outRows=" + out.length,
