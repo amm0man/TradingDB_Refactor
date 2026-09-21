@@ -1195,25 +1195,8 @@ function tosTradesWriteCombinedFromParsed(
   ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
   importIssuesFlush(ctx);
 
-  tosUiAlertSafe(
-    "Trades import complete.\n" +
-      "Account: " +
-      (Account || "") +
-      "\n" +
-      "FolderPropKey: " +
-      folderIdPropKey +
-      "\n" +
-      "FolderName: " +
-      folderName +
-      "\n" +
-      "Files: " +
-      fileCount +
-      "\n" +
-      "Rows written (excl header): " +
-      (finalOut.length - 1) +
-      "\nOverlap keys (same trade in 2+ files): " +
-      overlapKeys,
-  );
+  // Success lives on Import Issues + TIMING. Do not block on OK.
+  // Keep tosUiAlertSafe for missing-header / folder / no-files errors.
 }
 
 /**
@@ -1468,23 +1451,8 @@ function tosTopWriteCombinedFromParsed(
   ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
   importIssuesFlush(ctx);
 
-  tosUiAlertSafe(
-    "Top import complete.\n" +
-      "Account: " +
-      (Account || "") +
-      "\n" +
-      "FolderPropKey: " +
-      folderIdPropKey +
-      "\n" +
-      "FolderName: " +
-      folderName +
-      "\n" +
-      "Files: " +
-      fileCount +
-      "\n" +
-      "Rows written (excl header): " +
-      (finalOut.length - 1),
-  );
+   // Success lives on Import Issues + TIMING. Do not block on OK.
+  // Keep tosUiAlertSafe for missing-header / folder / no-files errors.
 }
 
 /** ======================================================================
