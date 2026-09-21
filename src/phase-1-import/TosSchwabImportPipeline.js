@@ -1186,19 +1186,34 @@ function tosTradesWriteCombinedFromParsed(
     ? newOut
     : tosMergeAccountLabeledCombined(sh, newOut, Account);
 
-  sh.clearContents();
-  tosFormatHeaderColumnAsText(sh, finalOut[0], "Symbol", finalOut.length, 1);
-  tosFormatHeaderColumnAsText(sh, finalOut[0], "Exec Time", finalOut.length, 1);
-  sh.getRange(1, 1, finalOut.length, finalOut[0].length).setValues(finalOut);
+   // Write first, then trim leftovers (same pattern as Push).
+  // clearContents() emptied the whole Combined tab before setValues.
+  const prevLastRow = Math.max(sh.getLastRow(), 1);
+  const prevLastCol = Math.max(sh.getLastColumn(), 1);
+  const outRows = finalOut.length;
+  const outCols = finalOut[0].length;
 
+  tosFormatHeaderColumnAsText(sh, finalOut[0], "Symbol", outRows, 1);
+  tosFormatHeaderColumnAsText(sh, finalOut[0], "Exec Time", outRows, 1);
+  sh.getRange(1, 1, outRows, outCols).setValues(finalOut);
+
+  if (prevLastRow > outRows) {
+    sh.getRange(outRows + 1, 1, prevLastRow - outRows, prevLastCol).clearContent();
+  }
+  if (prevLastCol > outCols) {
+    const rowsToClear = Math.max(prevLastRow, outRows);
+    sh.getRange(1, outCols + 1, rowsToClear, prevLastCol - outCols).clearContent();
+  }
+
+  // Sheet sort is only needed after merge-by-account (other account rows
+  // were prepended). Combined Both already sorted in memory.
   const execCol = finalOut[0].indexOf("Exec Time") + 1;
-  if (execCol > 0 && finalOut.length > 2) {
-    sh.getRange(2, 1, finalOut.length - 1, finalOut[0].length).sort({
+  if (!options.replaceEntireSheet && execCol > 0 && outRows > 2) {
+    sh.getRange(2, 1, outRows - 1, outCols).sort({
       column: execCol,
       ascending: true,
     });
   }
-
   ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
   importIssuesFlush(ctx);
 
@@ -1436,24 +1451,23 @@ function tosTopWriteCombinedFromParsed(
     finalOut.splice(1, finalOut.length - 1, ...dataRows);
   }
 
-  sh.clearContents();
-  tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME"], finalOut.length, 1);
-  tosFormatHeaderColumnsAsText(
-    sh,
-    finalOut[0],
-    ["TimeRaw"],
-    finalOut.length,
-    1,
-  );
-  sh.getRange(1, 1, finalOut.length, finalOut[0].length).setValues(finalOut);
-  tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME"], finalOut.length, 1);
-  tosFormatHeaderColumnsAsText(
-    sh,
-    finalOut[0],
-    ["TimeRaw"],
-    finalOut.length,
-    1,
-  );
+  // Write first, then trim leftovers. Format TIME / TimeRaw BEFORE setValues
+  // only (HHmmss must stay text). The second format after setValues was waste.
+  const prevLastRow = Math.max(sh.getLastRow(), 1);
+  const prevLastCol = Math.max(sh.getLastColumn(), 1);
+  const outRows = finalOut.length;
+  const outCols = finalOut[0].length;
+
+  tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME", "TimeRaw"], outRows, 1);
+  sh.getRange(1, 1, outRows, outCols).setValues(finalOut);
+
+  if (prevLastRow > outRows) {
+    sh.getRange(outRows + 1, 1, prevLastRow - outRows, prevLastCol).clearContent();
+  }
+  if (prevLastCol > outCols) {
+    const rowsToClear = Math.max(prevLastRow, outRows);
+    sh.getRange(1, outCols + 1, rowsToClear, prevLastCol - outCols).clearContent();
+  }
 
   ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
   importIssuesFlush(ctx);
