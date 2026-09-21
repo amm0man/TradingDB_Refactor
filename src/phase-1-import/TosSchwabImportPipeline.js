@@ -370,7 +370,11 @@ function tosImportBothSectionsFromFolderBothAccounts() {
       "OutputSheet",
       tosConfig.tradesCombinedSheetName,
     );
-    importIssuesSetMetric(topCtx, "OutputSheet", tosConfig.topCombinedSheetName);
+    importIssuesSetMetric(
+      topCtx,
+      "OutputSheet",
+      tosConfig.topCombinedSheetName,
+    );
 
     const tWriteTrades = pipelineTimingNow();
     tosTradesWriteCombinedFromParsed(
@@ -471,7 +475,10 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account, options) {
     pipelineTimingLog(
       "tosImportBothSectionsFromFolder list",
       tList,
-      "Account=" + (Account || "") + " files=" + (csvFiles ? csvFiles.length : 0),
+      "Account=" +
+        (Account || "") +
+        " files=" +
+        (csvFiles ? csvFiles.length : 0),
     );
     if (!csvFiles) return;
 
@@ -531,7 +538,7 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account, options) {
         topRowsAll.length,
     );
 
-       if (skipWrite) {
+    if (skipWrite) {
       importIssuesFlush(tradesCtx);
       importIssuesFlush(topCtx);
       return {
@@ -590,7 +597,7 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account, options) {
     importIssuesFlush(tradesCtx);
     importIssuesFlush(topCtx);
     throw err;
-    } finally {
+  } finally {
     pipelineTimingLog(
       "tosImportBothSectionsFromFolder",
       tStep,
@@ -1175,7 +1182,7 @@ function tosTradesWriteCombinedFromParsed(
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = tosGetOrCreateSheet(ss, tosConfig.tradesCombinedSheetName);
-    const finalOut = options.replaceEntireSheet
+  const finalOut = options.replaceEntireSheet
     ? newOut
     : tosMergeAccountLabeledCombined(sh, newOut, Account);
 
@@ -1386,7 +1393,7 @@ function tosTopWriteCombinedFromParsed(
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = tosGetOrCreateSheet(ss, tosConfig.topCombinedSheetName);
-   const finalOut = options.replaceEntireSheet
+  const finalOut = options.replaceEntireSheet
     ? newOut
     : tosMergeAccountLabeledCombined(sh, newOut, Account);
 
@@ -1451,7 +1458,7 @@ function tosTopWriteCombinedFromParsed(
   ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
   importIssuesFlush(ctx);
 
-   // Success lives on Import Issues + TIMING. Do not block on OK.
+  // Success lives on Import Issues + TIMING. Do not block on OK.
   // Keep tosUiAlertSafe for missing-header / folder / no-files errors.
 }
 
@@ -1564,7 +1571,7 @@ function tosTradesImportFromFolder(folderIdPropKey, Account) {
     );
     importIssuesFlush(ctx);
     throw err;
-    } finally {
+  } finally {
     pipelineTimingLog(
       "tosTradesImportFromFolder",
       tStep,
@@ -1938,7 +1945,7 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
     );
     importIssuesFlush(ctx);
     throw err;
-   } finally {
+  } finally {
     pipelineTimingLog(
       "tosTopImportFromFolder",
       tStep,
@@ -2069,22 +2076,22 @@ function pushTosTradesCombinedToTosTrades() {
     );
     if (resp !== ui.Button.OK) return;
 
-        const tRead = pipelineTimingNow();
-    const values = src.getDataRange().getValues();
+    const tRead = pipelineTimingNow();
+    // One Combined read. Display text is required for Exec Time + Exp
+    // (getValues() Dates caused the TosTrades 6910 chimera).
     const displays = src.getDataRange().getDisplayValues();
     pipelineTimingLog(
       "pushTosTradesCombinedToTosTrades read",
       tRead,
-      "rows=" + (values ? values.length : 0),
+      "rows=" + (displays ? displays.length : 0) + " source=displayValues",
     );
 
-  
-    if (values.length < 2)
+    if (displays.length < 2)
       throw new Error("No data found in " + tosConfig.tradesCombinedSheetName);
 
-    ctx.metrics.SourceRowsReadExclHeader = values.length - 1;
+    ctx.metrics.SourceRowsReadExclHeader = displays.length - 1;
 
-    const headers = values[0].map((h) => String(h ?? "").trim());
+    const headers = displays[0].map((h) => String(h ?? "").trim());
 
     function headerIndex(name) {
       const j = headers.indexOf(name);
@@ -2124,8 +2131,8 @@ function pushTosTradesCombinedToTosTrades() {
 
     const out = [wanted];
 
-    for (let r = 1; r < values.length; r++) {
-      const row = values[r];
+    for (let r = 1; r < displays.length; r++) {
+      const row = displays[r];
 
       const hasAny = wanted.some(
         (h) => String(row[idx[h]] ?? "").trim() !== "",
@@ -2141,11 +2148,10 @@ function pushTosTradesCombinedToTosTrades() {
       // Copy the Combined *display* for Exec Time and Exp.
       // getValues() Dates + UTC rebuild were attaching the previous
       // row's clock/Exp (TosTrades 6910 = SPX 4515 body + CCJ 10:19 / 19-Jan-24).
-      const execDisplay = String(displays[r][idx["Exec Time"]] || "").trim();
-      const expDisplay = String(displays[r][idx["Exp"]] || "").trim();
+      const execDisplay = String(row[idx["Exec Time"]] || "").trim();
+      const expDisplay = String(row[idx["Exp"]] || "").trim();
 
       let execOut = "";
-      const execRaw = row[idx["Exec Time"]];
       const mIso = execDisplay.match(
         /^(\d{4})-(\d{2})-(\d{2})[\s\t]+(\d{2}):(\d{2})(?::(\d{2}))?/,
       );
@@ -2162,14 +2168,8 @@ function pushTosTradesCombinedToTosTrades() {
           mIso[5] +
           ":" +
           (mIso[6] || "00");
-      } else if (typeof execRaw === "string" && execRaw.trim()) {
-        execOut = execRaw.trim();
-      } else if (execRaw instanceof Date && !isNaN(execRaw.getTime())) {
-        execOut = Utilities.formatDate(
-          execRaw,
-          Session.getScriptTimeZone(),
-          "yyyy-MM-dd HH:mm:ss",
-        );
+      } else if (execDisplay) {
+        execOut = execDisplay;
       }
 
       if (!execOut) {
@@ -2179,8 +2179,8 @@ function pushTosTradesCombinedToTosTrades() {
           "",
           r + 1,
           "Exec Time",
-          String(execRaw ?? ""),
-          `Could not parse Exec Time. type=${typeof execRaw}, display="${execDisplay}"`,
+          execDisplay,
+          "Could not parse Exec Time from Combined display text.",
         );
         continue;
       }
@@ -2218,8 +2218,6 @@ function pushTosTradesCombinedToTosTrades() {
       tWrite,
       "rows=" + outRows,
     );
-
-    dst.getRange(1, 1, outRows, outCols).setValues(out);
 
     // Keep Exec Time readable, but Exp must stay the TOS text ("31 Aug 23").
     if (outRows > 1) {
@@ -2503,7 +2501,7 @@ function pushTosTopCombinedToTosTop() {
     );
     importIssuesFlush(ctx);
     throw err;
-   } finally {
+  } finally {
     pipelineTimingLog("pushTosTopCombinedToTosTop", tStep);
     lock.releaseLock();
   }
