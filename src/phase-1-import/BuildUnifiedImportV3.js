@@ -2840,24 +2840,34 @@ function buildUnifiedImportV3() {
 
     // Map each unified object to a positional array in header order.
     // Internal-only fields (tradeGroupKey, optType) are intentionally excluded.
+    // Date/Time strings are padded from the Timestamp Date. Do not call
+    // Utilities.formatDate in this 16k loop (it was 33.8s of assemble).
+    function pad2_(n) {
+      return n < 10 ? "0" + n : String(n);
+    }
+    function formatSchwabImportDateFromTs_(ts) {
+      return (
+        pad2_(ts.getMonth() + 1) +
+        "/" +
+        pad2_(ts.getDate()) +
+        "/" +
+        ts.getFullYear()
+      );
+    }
+    function formatSchwabImportTimeFromTs_(ts) {
+      return pad2_(ts.getHours()) + ":" + pad2_(ts.getMinutes());
+    }
+
     const out = [headers].concat(
       all.map((r) => [
         r.Account ?? "",
         // Date derived from Timestamp (authoritative) — written as a value, no formula needed.
         r.Timestamp instanceof Date && !isNaN(r.Timestamp.getTime())
-          ? Utilities.formatDate(
-              r.Timestamp,
-              Session.getScriptTimeZone(),
-              "MM/dd/yyyy",
-            )
+          ? formatSchwabImportDateFromTs_(r.Timestamp)
           : (r.Date ?? ""),
         // Time derived from Timestamp — written as a value, no formula needed.
         r.Timestamp instanceof Date && !isNaN(r.Timestamp.getTime())
-          ? Utilities.formatDate(
-              r.Timestamp,
-              Session.getScriptTimeZone(),
-              "HH:mm",
-            )
+          ? formatSchwabImportTimeFromTs_(r.Timestamp)
           : (r.Time ?? ""),
         r.Timestamp instanceof Date && !isNaN(r.Timestamp.getTime())
           ? r.Timestamp
@@ -2946,7 +2956,7 @@ function buildUnifiedImportV3() {
       const writeMs = new Date() - startWrite;
       importIssuesSetMetric(ctx, "WriteTimeMs", writeMs);
       tosMaybeDebugAlert("Write to Schwab Import took " + writeMs + " ms");
-      } else {
+    } else {
       // normal fast path
       outSh.getRange(1, 1, out.length, headers.length).setValues(out);
     }
