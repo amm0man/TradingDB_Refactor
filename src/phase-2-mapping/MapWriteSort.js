@@ -23,6 +23,8 @@
 
 /** Writes mapping rows to "Schwab Mapping". */
 function writeMappingRowsV3(mappingSheet, mappingHeaders, outRows) {
+  const tWriteFn = pipelineTimingNow();
+
   // Ensure enough rows
   const neededRows = outRows.length + 1; // + header
   const maxRows = mappingSheet.getMaxRows();
@@ -38,27 +40,42 @@ function writeMappingRowsV3(mappingSheet, mappingHeaders, outRows) {
   }
 
   if (outRows.length) {
+    const tSet1 = pipelineTimingNow();
     mappingSheet
       .getRange(2, 1, outRows.length, mappingHeaders.length)
       .setValues(outRows);
-    if (outRows.length) {
-      mappingSheet
-        .getRange(2, 1, outRows.length, mappingHeaders.length)
-        .setValues(outRows);
+    pipelineTimingLog(
+      "writeMappingRowsV3 setValues1",
+      tSet1,
+      "rows=" + outRows.length,
+    );
 
-      const tsCol = mappingHeaders.indexOf("Trade Time Stamp") + 1;
-      const dateCol = mappingHeaders.indexOf("Trade Date") + 1;
-      const n = outRows.length;
-      if (tsCol > 0) {
-        mappingSheet
-          .getRange(2, tsCol, n, 1)
-          .setNumberFormat("mm/dd/yyyy hh:mm:ss");
-      }
-      if (dateCol > 0) {
-        mappingSheet.getRange(2, dateCol, n, 1).setNumberFormat("mm/dd/yyyy");
-      }
+    const tSet2 = pipelineTimingNow();
+    mappingSheet
+      .getRange(2, 1, outRows.length, mappingHeaders.length)
+      .setValues(outRows);
+    pipelineTimingLog(
+      "writeMappingRowsV3 setValues2",
+      tSet2,
+      "rows=" + outRows.length,
+    );
+
+    const tFmt = pipelineTimingNow();
+    const tsCol = mappingHeaders.indexOf("Trade Time Stamp") + 1;
+    const dateCol = mappingHeaders.indexOf("Trade Date") + 1;
+    const n = outRows.length;
+    if (tsCol > 0) {
+      mappingSheet
+        .getRange(2, tsCol, n, 1)
+        .setNumberFormat("mm/dd/yyyy hh:mm:ss");
     }
+    if (dateCol > 0) {
+      mappingSheet.getRange(2, dateCol, n, 1).setNumberFormat("mm/dd/yyyy");
+    }
+    pipelineTimingLog("writeMappingRowsV3 numberFormat", tFmt, "rows=" + n);
   }
+
+  pipelineTimingLog("writeMappingRowsV3", tWriteFn, "rows=" + outRows.length);
 }
 
 /** Make a compact "A=3 | B=10 | C=1" metric string (sorted by count desc). */

@@ -274,13 +274,6 @@ function mapSchwabImportByHeadersV3() {
       .getValues();
     rowsRead = importData.length;
 
-    pipelineTimingLog(
-      "mapSchwabImportByHeadersV3 read",
-      tMap,
-      "rows=" + rowsRead,
-    );
-    const tLoop = pipelineTimingNow();
-
     // --- Read Schwab Mapping headers (row 1 must exist) ---
     const mappingLastCol = mappingSheet.getLastColumn();
     const mappingHeaders = mappingSheet
@@ -348,6 +341,13 @@ function mapSchwabImportByHeadersV3() {
     // - importRowNum: original Schwab Import row number (stable tie-breaker for identical timestamps)
     // - spreadRaw: raw Spread label from Schwab Import (used later for group-based strategy normalization)
     const outItems = [];
+
+    pipelineTimingLog(
+      "mapSchwabImportByHeadersV3 read",
+      tMap,
+      "rows=" + rowsRead,
+    );
+    const tLoop = pipelineTimingNow();
 
     // =========================================================================
     // B) MAIN TRANSFORM LOOP
@@ -1159,6 +1159,12 @@ function mapSchwabImportByHeadersV3() {
 
     writeMappingRowsV3(mappingSheet, mappingHeaders, outRows);
     rowsWritten = outRows.length;
+    pipelineTimingLog(
+      "mapSchwabImportByHeadersV3 write",
+      tWrite,
+      "rows=" + outRows.length,
+    );
+    const tCheck = pipelineTimingNow();
 
     // ── Date/Time rendering check ──────────────────────────────────────────────
     // Fires a popup if any data row is missing Trade Date or Trade Time after
@@ -1168,12 +1174,7 @@ function mapSchwabImportByHeadersV3() {
       2,
       "mapSchwabImportByHeadersV3 → Schwab Mapping",
     );
-
-    pipelineTimingLog(
-      "mapSchwabImportByHeadersV3 write",
-      tWrite,
-      "rows=" + outRows.length,
-    );
+    pipelineTimingLog("mapSchwabImportByHeadersV3 checkDateTime", tCheck);
     // ─────────────────────────────────────────────────────────────────────────
 
     // =========================
