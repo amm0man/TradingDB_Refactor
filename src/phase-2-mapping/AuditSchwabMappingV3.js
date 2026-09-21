@@ -29,6 +29,8 @@
 //   AuditWarns  = 0    (review each warn; accept or fix before proceeding)
 // ============================================================================
 function auditSchwabMappingV3() {
+  const tAudit = pipelineTimingNow();
+  try {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ctx = mappingIssuesStart("auditSchwabMappingV3");
 
@@ -675,4 +677,7 @@ function auditSchwabMappingV3() {
           ? "🟡 Review warnings in Schwab Mapping Issues. Resolve or verify before Phase 3."
           : "✅ Schwab Mapping is clean. Safe to run refreshAllScripts."),
   );
+  } finally {
+    pipelineTimingLog("auditSchwabMappingV3", tAudit);
+  }
 }

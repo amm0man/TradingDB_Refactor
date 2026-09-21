@@ -272,15 +272,24 @@ function tosSetFolderId(title, propKey) {
 // Runs the import for DT and then LT so both accounts end up in the Combined sheets.
 
 function tosTradesImportFromFolderBothAccounts() {
-  tosTradesImportFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
-  tosTradesImportFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+  const tBoth = pipelineTimingNow();
+  try {
+    tosTradesImportFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
+    tosTradesImportFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+  } finally {
+    pipelineTimingLog("tosTradesImportFromFolderBothAccounts", tBoth);
+  }
 }
 
 function tosTopImportFromFolderBothAccounts() {
-  tosTopImportFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
-  tosTopImportFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+  const tBoth = pipelineTimingNow();
+  try {
+    tosTopImportFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
+    tosTopImportFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+  } finally {
+    pipelineTimingLog("tosTopImportFromFolderBothAccounts", tBoth);
+  }
 }
-
 /**
  * One-button full pipeline for both accounts:
  * Drive CSVs → Combined sheets → TosTrades/TosTop → BuildUnifiedImportV3
@@ -293,17 +302,9 @@ function tosRunFullTosToSchwabImportBothAccounts() {
   const tAll = pipelineTimingNow();
 
   try {
-    const t1 = pipelineTimingNow();
     tosImportBothSectionsFromFolderBothAccounts();
-    pipelineTimingLog("tosImportBothSectionsFromFolderBothAccounts", t1);
-
-    const t2 = pipelineTimingNow();
     pushTosCombinedToBoth();
-    pipelineTimingLog("pushTosCombinedToBoth", t2);
-
-    const t3 = pipelineTimingNow();
     buildUnifiedImportV3();
-    pipelineTimingLog("buildUnifiedImportV3", t3);
   } finally {
     pipelineTimingLog("tosRunFullTosToSchwabImportBothAccounts TOTAL", tAll);
     // Always clear so a later manual step doesn’t accidentally reuse this RunId.
@@ -333,8 +334,13 @@ function tosImportBothSectionsFromFolderCurrentAccount() {
 }
 
 function tosImportBothSectionsFromFolderBothAccounts() {
-  tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
-  tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+  const tBoth = pipelineTimingNow();
+  try {
+    tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("DT"), "DT");
+    tosImportBothSectionsFromFolder(tosGetAccountFolderIdPropKey("LT"), "LT");
+  } finally {
+    pipelineTimingLog("tosImportBothSectionsFromFolderBothAccounts", tBoth);
+  }
 }
 
 /**
@@ -346,6 +352,7 @@ function tosImportBothSectionsFromFolderBothAccounts() {
  * row counts match a two-walk run.
  */
 function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
+  const tStep = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
@@ -470,7 +477,12 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
     importIssuesFlush(tradesCtx);
     importIssuesFlush(topCtx);
     throw err;
-  } finally {
+    } finally {
+    pipelineTimingLog(
+      "tosImportBothSectionsFromFolder",
+      tStep,
+      "Account=" + (Account || ""),
+    );
     lock.releaseLock();
   }
 }
@@ -480,12 +492,14 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
  * Uses a script lock so two runs cannot overlap.
  */
 function pushTosCombinedToBoth() {
+  const tBoth = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
     pushTosTradesCombinedToTosTrades();
     pushTosTopCombinedToTosTop();
   } finally {
+    pipelineTimingLog("pushTosCombinedToBoth", tBoth);
     lock.releaseLock(); // always runs — even if an inner function throws
   }
 }
@@ -1377,6 +1391,7 @@ function tosTopWriteCombinedFromParsed(
  *    - tosTradesImportFromFolderCurrentAccount()
  */
 function tosTradesImportFromFolder(folderIdPropKey, Account) {
+  const tStep = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
@@ -1460,7 +1475,12 @@ function tosTradesImportFromFolder(folderIdPropKey, Account) {
     );
     importIssuesFlush(ctx);
     throw err;
-  } finally {
+    } finally {
+    pipelineTimingLog(
+      "tosTradesImportFromFolder",
+      tStep,
+      "Account=" + (Account || ""),
+    );
     lock.releaseLock();
   }
 }
@@ -1758,6 +1778,7 @@ function tosTradesParseExecTime(v) {
  *    - tosTopImportFromFolderCurrentAccount()
  */
 function tosTopImportFromFolder(folderIdPropKey, Account) {
+  const tStep = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
@@ -1828,7 +1849,12 @@ function tosTopImportFromFolder(folderIdPropKey, Account) {
     );
     importIssuesFlush(ctx);
     throw err;
-  } finally {
+   } finally {
+    pipelineTimingLog(
+      "tosTopImportFromFolder",
+      tStep,
+      "Account=" + (Account || ""),
+    );
     lock.releaseLock();
   }
 }
@@ -1928,6 +1954,7 @@ function tosTopParseDateTimeMinute(dateStr, hhmmOrHhmmss) {
  *  - Called by pushTosCombinedToBoth() and by the menu
  */
 function pushTosTradesCombinedToTosTrades() {
+  const tStep = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
@@ -2132,6 +2159,7 @@ function pushTosTradesCombinedToTosTrades() {
     importIssuesFlush(ctx);
     throw err;
   } finally {
+    pipelineTimingLog("pushTosTradesCombinedToTosTrades", tStep);
     lock.releaseLock();
   }
 }
@@ -2151,6 +2179,7 @@ function pushTosTradesCombinedToTosTrades() {
  *  - Called by pushTosCombinedToBoth() and by the menu
  */
 function pushTosTopCombinedToTosTop() {
+  const tStep = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
@@ -2369,7 +2398,8 @@ function pushTosTopCombinedToTosTop() {
     );
     importIssuesFlush(ctx);
     throw err;
-  } finally {
+   } finally {
+    pipelineTimingLog("pushTosTopCombinedToTosTop", tStep);
     lock.releaseLock();
   }
 }
