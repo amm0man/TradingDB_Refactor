@@ -274,6 +274,13 @@ function mapSchwabImportByHeadersV3() {
       .getValues();
     rowsRead = importData.length;
 
+    pipelineTimingLog(
+      "mapSchwabImportByHeadersV3 read",
+      tMap,
+      "rows=" + rowsRead,
+    );
+    const tLoop = pipelineTimingNow();
+
     // --- Read Schwab Mapping headers (row 1 must exist) ---
     const mappingLastCol = mappingSheet.getLastColumn();
     const mappingHeaders = mappingSheet
@@ -1104,6 +1111,14 @@ function mapSchwabImportByHeadersV3() {
 
     // Group-based Strategy Type normalization for multi-leg spreads
     // (VERTICAL / IRON CONDOR / BUTTERFLY) so all legs get the same label.
+
+    pipelineTimingLog(
+      "mapSchwabImportByHeadersV3 loop",
+      tLoop,
+      "outItems=" + outItems.length,
+    );
+    const tPost = pipelineTimingNow();
+
     postProcessStrategyTypeBySpreadGroups(outItems, mappingHeaderMap);
 
     // NEW: Position-tracker pass — re-labels Strategy Type on CLOSE rows (including
@@ -1127,6 +1142,9 @@ function mapSchwabImportByHeadersV3() {
     //    Authoritative sequencing key for everything downstream.
     //    Stable tie-breaker: original Schwab Import row number when timestamps match.
     // =========================================================================
+    pipelineTimingLog("mapSchwabImportByHeadersV3 post", tPost);
+    const tSort = pipelineTimingNow();
+
     sortMappingRowsByTradeTimeStamp(outItems, mappingHeaderMap);
 
     // Convert to 2D values array for writing
@@ -1135,6 +1153,10 @@ function mapSchwabImportByHeadersV3() {
     });
 
     // Write to "Schwab Mapping" (rebuild mode keeps formatting because writeMappingRowsV3_ uses clearContent)
+
+    pipelineTimingLog("mapSchwabImportByHeadersV3 sort", tSort);
+    const tWrite = pipelineTimingNow();
+
     writeMappingRowsV3(mappingSheet, mappingHeaders, outRows);
     rowsWritten = outRows.length;
 
@@ -1145,6 +1167,12 @@ function mapSchwabImportByHeadersV3() {
       mappingSheet,
       2,
       "mapSchwabImportByHeadersV3 → Schwab Mapping",
+    );
+
+    pipelineTimingLog(
+      "mapSchwabImportByHeadersV3 write",
+      tWrite,
+      "rows=" + outRows.length,
     );
     // ─────────────────────────────────────────────────────────────────────────
 

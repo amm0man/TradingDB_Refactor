@@ -253,6 +253,8 @@ function buildUnifiedImportV3() {
     const topSh = mustGetSheet("TosTop");
     const tradesSh = mustGetSheet("TosTrades");
 
+    const tRead = pipelineTimingNow();
+
     // Read entire sheets (we now keep BOTH accounts together)
     let topRows = readSheetObjects(topSh);
     let tradesTbl = readSheetTable(tradesSh);
@@ -302,6 +304,13 @@ function buildUnifiedImportV3() {
 
     const splitAdjustments = readSplitAdjustments();
     const corpActionStockMap = readCorpActionStockMap();
+
+    pipelineTimingLog(
+      "buildUnifiedImportV3 read",
+      tRead,
+      "top=" + topRows.length + " trades=" + tradesTbl.rows.length,
+    );
+    const tQueues = pipelineTimingNow();
 
     // Group H special-case parsers live in BuildUnifiedSpecialParsers.js.
     const _parsers = createSpecialParsers({
@@ -548,6 +557,13 @@ function buildUnifiedImportV3() {
 
     // Group A enrichment helpers were bound just after the queues above
     // (createTopTradeEnrichmentHelpers in BuildUnifiedEnrichment.js).
+
+    pipelineTimingLog(
+      "buildUnifiedImportV3 queues",
+      tQueues,
+      "topTrdRowsSeen=" + topTrdRowsSeen,
+    );
+    const tPrepass = pipelineTimingNow();
 
     // =========================================================================
     // 6) CONVERT TosTrades ROWS → UNIFIED TRADE ROWS
@@ -1008,6 +1024,9 @@ function buildUnifiedImportV3() {
         canonicalSpreadChoiceByBundleKey[bundleKey] = { openTs: chosen.ts };
       }
     });
+
+    pipelineTimingLog("buildUnifiedImportV3 prepass", tPrepass);
+    const tMain = pipelineTimingNow();
 
     for (let i = 0; i < tradesTbl.rows.length; i++) {
       const row = tradesTbl.rows[i];
@@ -2057,6 +2076,13 @@ function buildUnifiedImportV3() {
 
     applyFeesToTopLegRuleB(unifiedTrades);
 
+        pipelineTimingLog(
+      "buildUnifiedImportV3 main",
+      tMain,
+      "unifiedTrades=" + unifiedTrades.length,
+    );
+    const tNontrade = pipelineTimingNow();
+
     // =========================================================================
     // 7) CONVERT TosTop NON-TRADE ROWS → UNIFIED NON-TRADE ROWS
     //    Handles everything in TosTop that is NOT a regular trade (TYPE != TRD):
@@ -2724,6 +2750,13 @@ function buildUnifiedImportV3() {
     //    then sort everything by Timestamp so downstream Phase 2 / Phase 3 logic
     //    sees a single chronological sequence. Multi-leg groups stay adjacent.
     // =========================================================================
+    pipelineTimingLog(
+      "buildUnifiedImportV3 nontrade",
+      tNontrade,
+      "unifiedNonTrades=" + unifiedNonTrades.length,
+    );
+    const tSort = pipelineTimingNow();
+
     const all = unifiedTrades.concat(unifiedNonTrades);
 
     all.sort((a, b) => {
@@ -2770,6 +2803,10 @@ function buildUnifiedImportV3() {
     //    matches the canonical Schwab Import header order exactly, then write it.
     //    Timestamp is the authoritative source for Date and Time columns.
     // =========================================================================
+
+    pipelineTimingLog("buildUnifiedImportV3 sort", tSort, "all=" + all.length);
+    const tWrite = pipelineTimingNow();
+
     const outSh = mustGetSheet("Schwab Import");
     const prevLastRow = outSh.getLastRow();
     const prevLastCol = outSh.getLastColumn();
@@ -2911,6 +2948,12 @@ function buildUnifiedImportV3() {
       outSh,
       2,
       "buildUnifiedImportV3 → Schwab Import",
+    );
+
+        pipelineTimingLog(
+      "buildUnifiedImportV3 write",
+      tWrite,
+      "outRows=" + out.length,
     );
     // ─────────────────────────────────────────────────────────────────────────
 

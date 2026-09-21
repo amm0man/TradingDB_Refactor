@@ -397,7 +397,13 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
         folderName,
     );
 
+    const tList = pipelineTimingNow();
     const csvFiles = tosListCsvFilesInFolder(folder, tradesCtx);
+    pipelineTimingLog(
+      "tosImportBothSectionsFromFolder list",
+      tList,
+      "Account=" + (Account || "") + " files=" + (csvFiles ? csvFiles.length : 0),
+    );
     if (!csvFiles) return;
 
     importIssuesSetMetric(topCtx, "FilesFound", csvFiles.length);
@@ -412,6 +418,7 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
     let topRowsAll = [];
     let topHeader = null;
 
+    const tRead = pipelineTimingNow();
     for (let i = 0; i < csvFiles.length; i++) {
       const file = csvFiles[i];
       const grid = tosReadCsvFileToRows(file);
@@ -444,7 +451,18 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
       );
       if (headerFromFile && !topHeader) topHeader = headerFromFile;
     }
+    pipelineTimingLog(
+      "tosImportBothSectionsFromFolder readParse",
+      tRead,
+      "Account=" +
+        (Account || "") +
+        " tradesRows=" +
+        tradesAllRows.length +
+        " topRows=" +
+        topRowsAll.length,
+    );
 
+    const tWriteTrades = pipelineTimingNow();
     tosTradesWriteCombinedFromParsed(
       tradesCtx,
       Account,
@@ -454,7 +472,13 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
       tradesAllRows,
       tradesHeader,
     );
+    pipelineTimingLog(
+      "tosImportBothSectionsFromFolder writeTrades",
+      tWriteTrades,
+      "Account=" + (Account || ""),
+    );
 
+    const tWriteTop = pipelineTimingNow();
     tosTopWriteCombinedFromParsed(
       topCtx,
       Account,
@@ -463,6 +487,11 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account) {
       csvFiles.length,
       topRowsAll,
       topHeader,
+    );
+    pipelineTimingLog(
+      "tosImportBothSectionsFromFolder writeTop",
+      tWriteTop,
+      "Account=" + (Account || ""),
     );
   } catch (err) {
     importIssuesAdd(
@@ -1980,8 +2009,16 @@ function pushTosTradesCombinedToTosTrades() {
     );
     if (resp !== ui.Button.OK) return;
 
+        const tRead = pipelineTimingNow();
     const values = src.getDataRange().getValues();
     const displays = src.getDataRange().getDisplayValues();
+    pipelineTimingLog(
+      "pushTosTradesCombinedToTosTrades read",
+      tRead,
+      "rows=" + (values ? values.length : 0),
+    );
+
+  
     if (values.length < 2)
       throw new Error("No data found in " + tosConfig.tradesCombinedSheetName);
 
@@ -2112,6 +2149,14 @@ function pushTosTradesCombinedToTosTrades() {
       ["Symbol", "Exec Time", "Exp"],
       outRows,
       1,
+    );
+
+    const tWrite = pipelineTimingNow();
+    dst.getRange(1, 1, outRows, outCols).setValues(out);
+    pipelineTimingLog(
+      "pushTosTradesCombinedToTosTrades setValues",
+      tWrite,
+      "rows=" + outRows,
     );
 
     dst.getRange(1, 1, outRows, outCols).setValues(out);
