@@ -222,17 +222,41 @@ function debugCorpActionStockEmitterV3() {
     return out;
   }
 
-  function parseCorpActionStockDescription_(descRaw, cusipMap) {
-    const u = String(descRaw ?? '').trim().toUpperCase();
+   function parseCorpActionStockDescription_(descRaw, cusipMap) {
+    const u = String(descRaw ?? "").trim().toUpperCase();
     if (!u) return null;
 
-    let phrase = '';
-    if (u.includes('MANDATORY - EXCHANGE')) {
-      phrase = 'MANDATORY - EXCHANGE';
-    } else if (u.includes('NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION')) {
-      phrase = 'NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION';
+    // Must stay in lockstep with parseCorpActionStockDescription_
+    // inside createMappingSheetHelpers (BuildUnifiedMappingSheets.js).
+    let phrase = "";
+    if (u.includes("MANDATORY - EXCHANGE")) {
+      phrase = "MANDATORY - EXCHANGE";
+    } else if (u.includes("NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION")) {
+      phrase = "NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION";
+    } else if (u.includes("STOCK MERGER")) {
+      phrase = "STOCK MERGER";
     } else {
-      return null;
+      // Abbreviated credit receipt, e.g. "F4 URANIUM CORP F 336.0 FFUCF"
+      // Phrase is the map key. It does not appear in the TOS text.
+      const abbr = u.match(
+        /\b([A-Z])\s+([-+]?\d+(?:\.\d+)?)\s+([A-Z]{1,6})\s*$/,
+      );
+      if (!abbr) return null;
+      const rawQtyAbbr = Number(abbr[2]);
+      const parsedQtyAbbr = Math.abs(rawQtyAbbr);
+      if (!isFinite(parsedQtyAbbr) || parsedQtyAbbr <= 0) return null;
+      const rawTokenAbbr = String(abbr[3] || "").toUpperCase();
+      if (!rawTokenAbbr) return null;
+      return {
+        phrase: "CORP ACTION RECEIVED SHARES",
+        rawQty: rawQtyAbbr,
+        parsedQty: parsedQtyAbbr,
+        rawToken: rawTokenAbbr,
+        resolvedSymbol: normalizeSymbol(rawTokenAbbr),
+        tokenWasCusip: false,
+        cusipMapped: false,
+        rawText: u,
+      };
     }
 
     const afterPhrase = u.substring(u.indexOf(phrase) + phrase.length).trim();
@@ -243,25 +267,28 @@ function debugCorpActionStockEmitterV3() {
     const parsedQty = Math.abs(rawQty);
     if (!isFinite(parsedQty) || parsedQty <= 0) return null;
 
-    const afterQty = afterPhrase.substring(qtyMatch.index + qtyMatch[0].length).trim();
+    // Debit side of "Stock Merger -qty" is not a delivery.
+    if (phrase === "STOCK MERGER" && rawQty <= 0) return null;
+
+    const afterQty = afterPhrase
+      .substring(qtyMatch.index + qtyMatch[0].length)
+      .trim();
     const tokens = afterQty.match(/[A-Z0-9\/]{1,20}/g) || [];
 
-    let rawToken = '';
+    let rawToken = "";
     for (let t = 0; t < tokens.length; t++) {
-      const tok = String(tokens[t] || '').trim().toUpperCase();
+      const tok = String(tokens[t] || "").trim().toUpperCase();
       if (!tok) continue;
       if (/^\d+(?:\.\d+)?$/.test(tok)) continue;
       rawToken = tok;
       break;
     }
-
     if (!rawToken) return null;
 
     let resolvedSymbol = normalizeSymbol(rawToken);
     const cusipCandidate = normalizeCusip(rawToken);
     let tokenWasCusip = false;
     let cusipMapped = false;
-
     if (looksLikeCusip(cusipCandidate) && /\d/.test(cusipCandidate)) {
       tokenWasCusip = true;
       const mapped = cusipMap[cusipCandidate];
@@ -281,7 +308,7 @@ function debugCorpActionStockEmitterV3() {
       resolvedSymbol: resolvedSymbol,
       tokenWasCusip: tokenWasCusip,
       cusipMapped: cusipMapped,
-      rawText: u
+      rawText: u,
     };
   }
 
@@ -349,9 +376,14 @@ function debugCorpActionStockEmitterV3() {
 
     if (type === 'TRD') continue;
 
+       const descU = desc.toUpperCase();
     const quickHit =
-      desc.toUpperCase().includes('MANDATORY - EXCHANGE') ||
-      desc.toUpperCase().includes('NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION');
+      descU.includes("MANDATORY - EXCHANGE") ||
+      descU.includes("NON-TAXABLE SPIN OFF/LIQUIDATION DISTRIBUTION") ||
+      descU.includes("STOCK MERGER") ||
+      descU.includes("PENDING RECEIPT") ||
+      descU.indexOf("FFUCF") >= 0 ||
+      descU.indexOf("FUUFF") >= 0;
 
     const parsed = parseCorpActionStockDescription_(desc, cusipMap);
 
