@@ -278,14 +278,29 @@ function createSpecialParsers(opts) {
 
     if (!isFinite(parsedQty) || parsedQty <= 0) return { isSplit: false };
 
+       // Lone TOS "STOCK SPLIT 21.668 URNM":
+    //   qty is the pre-split holding, not the post-split total.
+    // Contrast PANW:
+    //   "FORWARD SPLIT WITH STOCK SPLIT SHARES 1.0 PANW"
+    //   has FORWARD + SHARES, and qty is the post-split count.
+    const bareStockSplitPre =
+      !isReverse &&
+      u.startsWith("STOCK SPLIT") &&
+      !u.includes("FORWARD") &&
+      !/\bSHARES\b/.test(u);
+
     const looksLikePreLeg =
       rawQty < 0 ||
       /\bEFF\s*-/.test(u) ||
       /\bMANDATORY\s+REVERSE\s+SPLIT\s*-/.test(u) ||
       /\bOXXXREVERSE\b/.test(u) ||
-      /\bXXXREVERSE\b/.test(u);
+      /\bXXXREVERSE\b/.test(u) ||
+      bareStockSplitPre;
 
-    const looksLikePostLeg = rawQty > 0;
+    // A bare STOCK SPLIT line must not also count as POST, or
+    // buildCanonicalSplitRowFromCandidates_ sets preQty = postQty
+    // and qtyDelta becomes 0.
+    const looksLikePostLeg = rawQty > 0 && !looksLikePreLeg;;
 
     return {
       isSplit: true,

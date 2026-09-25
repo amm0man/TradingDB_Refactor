@@ -125,10 +125,10 @@ function onOpen() {
   // Data Actions submenu
   const dataActionsMenu = ui
     .createMenu("Data Actions")
-    .addItem("Schwab Mapping to Import and run scripts", "refreshAllScripts")
-    .addItem("Move Schwab Mapping to Import", "copyMappingToImportByHeaders")
-    .addItem("Validate and Clean Import", "validateAndCleanImportToHelperV3")
-    .addItem("Run Block Logic on Helper", "populateStagingWithBlockLogicV3")
+    .addItem("Schwab Mapping to Import and run thru Block Logic", "refreshAllScripts")
+    .addItem("1. Move Schwab Mapping to Import", "copyMappingToImportByHeaders")
+    .addItem("2. Validate and Clean Import", "validateAndCleanImportToHelperV3")
+    .addItem("3. Run Block Logic on Helper", "populateStagingWithBlockLogicV3")
     .addItem(
       "Run Audit on Staging - Final Check before push to Master",
       "auditPipelineIntegrity",

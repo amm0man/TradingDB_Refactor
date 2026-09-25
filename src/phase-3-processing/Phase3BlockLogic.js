@@ -340,31 +340,44 @@ function populateStagingWithBlockLogicV3(seedBlocks) {
       : Math.round(rawPost * 1e8) / 1e8;
   }
 
-  function isMatchingSplitRowForBlock_(runningBeforeSplit, splitInfo) {
-    if (!splitInfo) return true;
+    function isMatchingSplitRowForBlock_(runningBeforeSplit, splitInfo) {
+      if (!splitInfo) return true;
 
-    if (
-      isFinite(splitInfo.preQty) &&
-      Math.abs(splitInfo.preQty - runningBeforeSplit) < 1e-8
-    ) {
-      return true;
-    }
-
-    if (isFinite(splitInfo.postQty)) {
-      const expectedPost = computeExpectedPostSplitQty_(
-        runningBeforeSplit,
-        splitInfo,
-      );
       if (
-        isFinite(expectedPost) &&
-        Math.abs(splitInfo.postQty - expectedPost) < 1e-8
+        isFinite(splitInfo.preQty) &&
+        Math.abs(splitInfo.preQty - runningBeforeSplit) < 1e-8
       ) {
         return true;
       }
-    }
 
-    return false;
-  }
+      if (isFinite(splitInfo.postQty)) {
+        const expectedPost = computeExpectedPostSplitQty_(
+          runningBeforeSplit,
+          splitInfo,
+        );
+        if (
+          isFinite(expectedPost) &&
+          Math.abs(splitInfo.postQty - expectedPost) < 1e-8
+        ) {
+          return true;
+        }
+      }
+
+      // Notes PRE/POST are Phase 1's guess from one TosTop number.
+      // PANW "SHARES 1.0" was stored as POST=1 / PRE=0.5, but the live
+      // lot is not 0.5. Same-ticker split: live book × ratio is truth.
+      // Do not apply to a flat book (running 0).
+      if (
+        runningBeforeSplit > 1e-8 &&
+        isFinite(splitInfo.numerator) &&
+        isFinite(splitInfo.denominator) &&
+        splitInfo.denominator > 0
+      ) {
+        return true;
+      }
+
+      return false;
+    }
 
   function findRenameSourceStockBlockForSplit_(
     acct,
