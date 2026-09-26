@@ -632,8 +632,10 @@ function buildUnifiedImportV3() {
     const spreadFillCountByGroupKey = {}; // groupKey -> expected number of fills (min(buyRows, sellRows))
 
     const butterflyNetAbsByKey = {}; // bfKey -> abs(net per 1-lot strategy)
-    const butterflyNetSignedByKey = {}; // bfKey -> signed net per 1-lot strategy
+    const butterflyNetSignedByKey = {}; // bfKey -> signed sum of price * contracts
     const butterflyLegRowsByKey = {}; // bfKey -> count legs seen (diagnostic)
+    const butterflyNumericNetByKey = {}; // bfKey -> abs(numeric TosTrades Net Price) if any sibling has one
+    const butterflyStrategyLotsByKey = {}; // bfKey -> strategy lots (wing qty, or middle qty / 2)
 
     // DIAGONAL/CALENDAR: legs have different expirations, so we aggregate by a coarse key
     // and later attach a sorted expiration signature.
@@ -810,13 +812,24 @@ function buildUnifiedImportV3() {
           typeKey,
         ].join("|");
 
-        // qtyAbs is contracts; butterfly middle leg has qtyAbs=2 for a 1-lot strategy.
-        // Normalize to "strategy units" by dividing by 2 when qtyAbs is even (middle leg),
-        // otherwise treat as 1-unit legs.
-        const strategyUnits = qtyAbs % 2 === 0 ? qtyAbs / 2 : qtyAbs;
+        // 1-2-1: middle qty is 2x strategy lots. Sum price * contracts, then
+        // divide by lots at finalize so TosTop package price (e.g. 0.44) matches.
+        // Do NOT halve middle qty before multiplying — that turned a 1-lot
+        // 20.49+11.95-2*16=0.44 fly into 16.44.
+        const strategyLots = qtyAbs % 2 === 0 ? qtyAbs / 2 : qtyAbs;
+        const prevLots = Number(butterflyStrategyLotsByKey[bfKey] || 0);
+        if (strategyLots > prevLots)
+          butterflyStrategyLotsByKey[bfKey] = strategyLots;
 
         const prev = Number(butterflyNetSignedByKey[bfKey] || 0);
-        butterflyNetSignedByKey[bfKey] = prev + sign * price * strategyUnits;
+        butterflyNetSignedByKey[bfKey] = prev + sign * price * qtyAbs;
+
+        // TOS prints the package net on one leg (0.44) and DEBIT/CREDIT on another.
+        const netRaw = cell(row, tradesTbl.idx, "Net Price");
+        const netNum = toNum(netRaw);
+        if (!isNaN(netNum) && isFinite(netNum) && netNum !== 0) {
+          butterflyNumericNetByKey[bfKey] = Math.abs(netNum);
+        }
 
         butterflyLegRowsByKey[bfKey] =
           Number(butterflyLegRowsByKey[bfKey] || 0) + 1;
@@ -922,8 +935,14 @@ function buildUnifiedImportV3() {
     });
 
     Object.keys(butterflyNetSignedByKey).forEach((k) => {
-      const v = Number(butterflyNetSignedByKey[k]);
-      butterflyNetAbsByKey[k] = isFinite(v) ? Math.abs(v) : 0;
+      const numeric = Number(butterflyNumericNetByKey[k]);
+      if (isFinite(numeric) && numeric > 0) {
+        butterflyNetAbsByKey[k] = numeric;
+        return;
+      }
+      const signed = Number(butterflyNetSignedByKey[k]);
+      const lots = Number(butterflyStrategyLotsByKey[k] || 1) || 1;
+      butterflyNetAbsByKey[k] = isFinite(signed) ? Math.abs(signed) / lots : 0;
     });
 
     importIssuesSetMetric(
@@ -1227,15 +1246,12 @@ function buildUnifiedImportV3() {
         matchPriceForPull = price;
       }
       // Butterfly: override match price using strategy net (per 1-lot) when available.
+      // Butterfly: override match price using strategy net (per 1-lot) when available.
+      // Must use normalizeExpKey so "28-Oct-22" / "28 Oct 22" / "28 October 22"
+      // hit the same pre-pass bfKey (yyyy-MM-dd). Raw toStr() was why
+      // WARN_WEAKENRICHMATCHPRICE fired on the DEBIT/CREDIT legs.
       if (spread === "BUTTERFLY") {
-        const expKey =
-          exp instanceof Date
-            ? Utilities.formatDate(
-                exp,
-                Session.getScriptTimeZone(),
-                "yyyy-MM-dd",
-              )
-            : toStr(exp).trim();
+        const bfExpKey = normalizeExpKey(exp);
 
         const bfKey = [
           Account,
@@ -1244,7 +1260,7 @@ function buildUnifiedImportV3() {
           sym,
           spread,
           posEffect,
-          expKey,
+          bfExpKey,
           typeKey,
         ].join("|");
         const bfNetAbs = butterflyNetAbsByKey[bfKey];
@@ -1389,16 +1405,9 @@ function buildUnifiedImportV3() {
         isFinite(computedSpreadNetAbs) &&
         computedSpreadNetAbs > 0;
 
-      // NEW: also check butterfly net (pre-pass already computed it)
+      // Butterfly net lives in butterflyNetAbsByKey, not spreadNetAbsByGroupKey.
+      // Use the already-normalized expKey from above (normalizeExpKey), not raw Exp text.
       if (!hasComputedSpreadNet && spread === "BUTTERFLY") {
-        const expKey =
-          exp instanceof Date
-            ? Utilities.formatDate(
-                exp,
-                Session.getScriptTimeZone(),
-                "yyyy-MM-dd",
-              )
-            : toStr(exp).trim();
         const bfKey = [
           Account,
           dateIso,
