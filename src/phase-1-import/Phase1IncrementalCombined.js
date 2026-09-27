@@ -87,7 +87,6 @@ function previewIncrementalCombinedMergeBothAccounts() {
     "Incremental Combined Trades Preview",
     parsedTrades && parsedTrades[0],
     tradesCmp.newRows,
-    
   );
   tosWriteIncrementalCombinedPreview_(
     ss,
@@ -108,7 +107,6 @@ function previewIncrementalCombinedMergeBothAccounts() {
     t0,
     "tradesNew=" +
       tradesCmp.newCount +
-      
       " topNew=" +
       topCmp.newCount +
       " files=" +
@@ -449,9 +447,7 @@ function mergeIncrementalCombinedNewRowsBothAccounts() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
 
-  const tradesCombined = ss.getSheetByName(
-    tosConfig.tradesCombinedSheetName,
-  );
+  const tradesCombined = ss.getSheetByName(tosConfig.tradesCombinedSheetName);
   const topCombined = ss.getSheetByName(tosConfig.topCombinedSheetName);
   const tradesLastBefore = tradesCombined ? tradesCombined.getLastRow() : "";
   const topLastBefore = topCombined ? topCombined.getLastRow() : "";
@@ -657,31 +653,35 @@ function tosAppendCombinedNewRows_(sheet, header, newRows, kind) {
   const out = rows.map(function (r) {
     return r.slice(0, writeCols);
   });
-  sheet.getRange(firstEmpty, 1, out.length, writeCols).setValues(out);
+  const headerRow = sheet.getRange(1, 1, 1, writeCols).getValues()[0];
 
+  // rowsCount = number of new rows. startRow = first empty Combined row.
+  // Same helper signature Combined Both uses:
+  // tosFormatHeaderColumnAsText(sheet, headerRow, name, rowsCount, startRow)
   if (kind === "TRADES") {
     tosFormatHeaderColumnAsText(
       sheet,
-      sheet.getRange(1, 1, 1, writeCols).getValues()[0],
+      headerRow,
       "Exec Time",
-      firstEmpty + out.length - 1,
+      out.length,
       firstEmpty,
     );
     tosFormatHeaderColumnAsText(
       sheet,
-      sheet.getRange(1, 1, 1, writeCols).getValues()[0],
+      headerRow,
       "Symbol",
-      firstEmpty + out.length - 1,
+      out.length,
       firstEmpty,
     );
+    sheet.getRange(firstEmpty, 1, out.length, writeCols).setValues(out);
   } else {
     tosFormatHeaderColumnsAsText(
       sheet,
-      sheet.getRange(1, 1, 1, writeCols).getValues()[0],
+      headerRow,
       ["TIME", "TimeRaw"],
-      firstEmpty + out.length - 1,
+      out.length,
       firstEmpty,
     );
+    sheet.getRange(firstEmpty, 1, out.length, writeCols).setValues(out);
   }
 }
-
