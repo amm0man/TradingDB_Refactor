@@ -151,6 +151,10 @@ function onOpen() {
       "Preview incremental candidates (Helper vs Master)",
       "previewIncrementalCandidatesFromHelper",
     )
+    .addItem(
+      "Incremental dry run (0-row proof)",
+      "runIncrementalFromHelperDryRun",
+    )
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")

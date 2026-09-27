@@ -948,3 +948,226 @@ function previewIncrementalCandidatesFromHelper() {
       "Does not write Staging or Master.",
   );
 }
+
+/**
+ * Shared cutoff + fingerprint walk used by the dry-run runner.
+ * Same rules as previewIncrementalCandidatesFromHelper.
+ * Returns null after an alert when Master/Helper cannot be read.
+ *
+ * candidateRows = Helper rows that would enter incremental Step 4.
+ * Preview sheet is NOT written here.
+ */
+function collectIncrementalCandidates_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const master = ss.getSheetByName("Master");
+  const helper = ss.getSheetByName("Helper");
+  if (!master) {
+    uiAlertSafe("Master sheet not found.");
+    return null;
+  }
+  if (!helper) {
+    uiAlertSafe("Helper sheet not found.");
+    return null;
+  }
+
+  function headerMap_(grid) {
+    const col = {};
+    grid[0].forEach(function (h, i) {
+      const norm = String(h || "")
+        .trim()
+        .toLowerCase();
+      if (norm) col[norm] = i;
+    });
+    return col;
+  }
+
+  function rowTs_(row, col) {
+    const tsVal =
+      col["trade time stamp"] !== undefined
+        ? row[col["trade time stamp"]]
+        : null;
+    const dateVal =
+      col["trade date"] !== undefined ? row[col["trade date"]] : null;
+    const timeVal =
+      col["trade time"] !== undefined ? row[col["trade time"]] : null;
+    return parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
+  }
+
+  function cell_(row, col, name) {
+    return col[name] !== undefined ? row[col[name]] : "";
+  }
+
+  const mLast = master.getLastRow();
+  const mLastCol = master.getLastColumn();
+  if (mLast < 2) {
+    uiAlertSafe("Master has no data rows.");
+    return null;
+  }
+  const mGrid = master.getRange(1, 1, mLast, mLastCol).getValues();
+  const mCol = headerMap_(mGrid);
+
+  let lastMasterTs = null;
+  for (let r = 1; r < mGrid.length; r++) {
+    const acct = String(mGrid[r][mCol["account"] || 0] || "").trim();
+    if (!acct) continue;
+    const ts = rowTs_(mGrid[r], mCol);
+    if (!ts) continue;
+    if (!lastMasterTs || ts.getTime() > lastMasterTs.getTime()) {
+      lastMasterTs = ts;
+    }
+  }
+  if (!lastMasterTs) {
+    uiAlertSafe("Master has no parseable Trade Time Stamp.");
+    return null;
+  }
+  const lastMs = lastMasterTs.getTime();
+
+  const masterFpAtLast = {};
+  for (let r = 1; r < mGrid.length; r++) {
+    const ts = rowTs_(mGrid[r], mCol);
+    if (!ts || ts.getTime() !== lastMs) continue;
+    masterFpAtLast[incrementalRowFingerprint_(mGrid[r], mCol)] = r + 1;
+  }
+
+  const hLast = helper.getLastRow();
+  const hLastCol = helper.getLastColumn();
+  if (hLast < 2) {
+    uiAlertSafe("Helper has no data rows.");
+    return null;
+  }
+  const hGrid = helper.getRange(1, 1, hLast, hLastCol).getValues();
+  const hCol = headerMap_(hGrid);
+
+  let afterNew = 0;
+  let atMatched = 0;
+  let atUnmatched = 0;
+  const candidateRows = [];
+
+  for (let r = 1; r < hGrid.length; r++) {
+    const row = hGrid[r];
+    const acct = String(cell_(row, hCol, "account") || "").trim();
+    if (!acct) continue;
+    const ts = rowTs_(row, hCol);
+    if (!ts) continue;
+    const ms = ts.getTime();
+    if (ms < lastMs) continue;
+
+    const fp = incrementalRowFingerprint_(row, hCol);
+    if (ms > lastMs) {
+      afterNew++;
+      candidateRows.push({
+        helperRow: r + 1,
+        status: "AFTER_NEW",
+        fingerprint: fp,
+        ts: ts,
+      });
+    } else if (masterFpAtLast[fp]) {
+      atMatched++;
+    } else {
+      atUnmatched++;
+      candidateRows.push({
+        helperRow: r + 1,
+        status: "AT_LAST_TS_UNMATCHED",
+        fingerprint: fp,
+        ts: ts,
+      });
+    }
+  }
+
+  return {
+    lastMasterTs: lastMasterTs,
+    afterNew: afterNew,
+    atMatched: atMatched,
+    atUnmatched: atUnmatched,
+    candidates: afterNew + atUnmatched,
+    candidateRows: candidateRows,
+  };
+}
+
+/**
+ * Phase 4 dry run. Does not write Helper, Staging, or Master.
+ * Does not call populateStagingWithBlockLogicV3.
+ *
+ * On the 9/1/2026 16:41:18 freeze this must report candidates = 0
+ * and then return. Seed is loaded only to prove seedBlocksFromMaster
+ * still runs. Live seed count is logged; nothing is applied to Staging.
+ *
+ * If candidates > 0 the function STOPS. That is new work, not this freeze.
+ */
+function runIncrementalFromHelperDryRun() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+
+  const collected = collectIncrementalCandidates_();
+  if (!collected) return;
+
+  const lastTxt = Utilities.formatDate(
+    collected.lastMasterTs,
+    tz,
+    "M/d/yyyy HH:mm:ss",
+  );
+
+  if (collected.candidates !== 0) {
+    pipelineTimingLog(
+      "runIncrementalFromHelperDryRun STOPPED",
+      t0,
+      "candidates=" + collected.candidates,
+    );
+    uiAlertSafe(
+      "Incremental dry run STOPPED.\n\n" +
+        "Master last ts: " +
+        lastTxt +
+        "\n" +
+        "AFTER new: " +
+        collected.afterNew +
+        "\n" +
+        "AT_LAST_TS unmatched: " +
+        collected.atUnmatched +
+        "\n" +
+        "Candidates: " +
+        collected.candidates +
+        "\n\n" +
+        "This freeze should be 0. Do not write Staging or Master.\n" +
+        "Run Preview incremental candidates and paste that sheet.",
+    );
+    return;
+  }
+
+  const blocks = seedBlocksFromMaster();
+  const keys = Object.keys(blocks);
+  let live = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const b = blocks[keys[i]];
+    if (Number(b.unit || 0) !== 0 || Number(b.runningQty || 0) !== 0) {
+      live++;
+    }
+  }
+
+  pipelineTimingLog(
+    "runIncrementalFromHelperDryRun",
+    t0,
+    "candidates=0 seedKeys=" + keys.length + " live=" + live,
+  );
+
+  uiAlertSafe(
+    "Incremental dry run OK.\n\n" +
+      "Master last ts: " +
+      lastTxt +
+      "\n" +
+      "Candidates: 0\n" +
+      "AFTER new: 0\n" +
+      "AT_LAST_TS matched: " +
+      collected.atMatched +
+      "\n" +
+      "Seed keys: " +
+      keys.length +
+      "\n" +
+      "Seed live: " +
+      live +
+      "\n\n" +
+      "No Helper / Staging / Master write.\n" +
+      "populateStagingWithBlockLogicV3 was not called.\n" +
+      "Expect seed keys 2514 and live 82 on this freeze.",
+  );
+}
