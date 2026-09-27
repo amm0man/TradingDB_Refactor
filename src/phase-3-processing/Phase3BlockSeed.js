@@ -702,3 +702,249 @@ function inspectIncrementalDeltaFromMaster() {
       "Open Incremental Delta Preview.",
   );
 }
+
+/**
+ * Stable identity for “is this Helper row already on Master?”
+ * Not a Position ID (Helper does not have Step 4 ids yet).
+ * Not timestamp alone (same-second fills exist in history).
+ *
+ * Account|ms|Ticker|Action|qty|strike|C/P
+ */
+function incrementalRowFingerprint_(row, col) {
+  function cell(name) {
+    return col[name] !== undefined ? row[col[name]] : "";
+  }
+  const acct = String(cell("account") || "")
+    .trim()
+    .toUpperCase();
+  const ticker = String(cell("ticker") || "")
+    .trim()
+    .toUpperCase();
+  const action = String(cell("action") || "")
+    .trim()
+    .toUpperCase();
+  const ts = (function () {
+    const tsVal = cell("trade time stamp");
+    if (tsVal instanceof Date && !isNaN(tsVal.getTime())) return tsVal.getTime();
+    return "";
+  })();
+  const qtyN = toNum(cell("quantity"));
+  const qty = isNaN(qtyN) ? "" : String(Math.round(qtyN * 1e8) / 1e8);
+  const strikeN = toNum(cell("option strike"));
+  const strike = isNaN(strikeN) ? "" : String(Math.round(strikeN * 1e4) / 1e4);
+  let cp = String(cell("call/put") || "")
+    .trim()
+    .toUpperCase()
+    .replace("CALL", "C")
+    .replace("PUT", "P");
+  if (cp.charAt(0) === "C") cp = "C";
+  else if (cp.charAt(0) === "P") cp = "P";
+  return [acct, ts, ticker, action, qty, strike, cp].join("|");
+}
+
+/**
+ * Read-only. Builds the set of Helper rows an incremental runner
+ * would send into seeded block logic.
+ *
+ * New = Helper ts > last Master ts
+ *    OR Helper ts == last Master ts AND fingerprint not on Master
+ *       at that same timestamp.
+ *
+ * Writes Incremental Candidates Preview (AFTER + AT_LAST_TS rows).
+ * Does not write Helper, Staging, or Master data.
+ * Does not call populateStagingWithBlockLogicV3.
+ */
+function previewIncrementalCandidatesFromHelper() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+
+  const master = ss.getSheetByName("Master");
+  const helper = ss.getSheetByName("Helper");
+  if (!master) {
+    uiAlertSafe("Master sheet not found.");
+    return;
+  }
+  if (!helper) {
+    uiAlertSafe("Helper sheet not found.");
+    return;
+  }
+
+  function headerMap_(grid) {
+    const col = {};
+    grid[0].forEach(function (h, i) {
+      const norm = String(h || "")
+        .trim()
+        .toLowerCase();
+      if (norm) col[norm] = i;
+    });
+    return col;
+  }
+
+  function rowTs_(row, col) {
+    const tsVal =
+      col["trade time stamp"] !== undefined
+        ? row[col["trade time stamp"]]
+        : null;
+    const dateVal =
+      col["trade date"] !== undefined ? row[col["trade date"]] : null;
+    const timeVal =
+      col["trade time"] !== undefined ? row[col["trade time"]] : null;
+    return parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
+  }
+
+  function cell_(row, col, name) {
+    return col[name] !== undefined ? row[col[name]] : "";
+  }
+
+  const mLast = master.getLastRow();
+  const mLastCol = master.getLastColumn();
+  if (mLast < 2) {
+    uiAlertSafe("Master has no data rows.");
+    return;
+  }
+  const mGrid = master.getRange(1, 1, mLast, mLastCol).getValues();
+  const mCol = headerMap_(mGrid);
+
+  let lastMasterTs = null;
+  for (let r = 1; r < mGrid.length; r++) {
+    const acct = String(mGrid[r][mCol["account"] || 0] || "").trim();
+    if (!acct) continue;
+    const ts = rowTs_(mGrid[r], mCol);
+    if (!ts) continue;
+    if (!lastMasterTs || ts.getTime() > lastMasterTs.getTime()) {
+      lastMasterTs = ts;
+    }
+  }
+  if (!lastMasterTs) {
+    uiAlertSafe("Master has no parseable Trade Time Stamp.");
+    return;
+  }
+  const lastMs = lastMasterTs.getTime();
+
+  const masterFpAtLast = {};
+  for (let r = 1; r < mGrid.length; r++) {
+    const ts = rowTs_(mGrid[r], mCol);
+    if (!ts || ts.getTime() !== lastMs) continue;
+    masterFpAtLast[incrementalRowFingerprint_(mGrid[r], mCol)] = r + 1;
+  }
+
+  const hLast = helper.getLastRow();
+  const hLastCol = helper.getLastColumn();
+  if (hLast < 2) {
+    uiAlertSafe("Helper has no data rows.");
+    return;
+  }
+  const hGrid = helper.getRange(1, 1, hLast, hLastCol).getValues();
+  const hCol = headerMap_(hGrid);
+
+  let afterNew = 0;
+  let atMatched = 0;
+  let atUnmatched = 0;
+  const preview = [
+    [
+      "Status",
+      "Candidate",
+      "Helper Row",
+      "Fingerprint",
+      "Master Row At Last Ts",
+      "Account",
+      "Ticker",
+      "Action",
+      "Trade Time Stamp",
+      "Quantity",
+      "Option Strike",
+      "Call/Put",
+    ],
+  ];
+
+  for (let r = 1; r < hGrid.length; r++) {
+    const row = hGrid[r];
+    const acct = String(cell_(row, hCol, "account") || "").trim();
+    if (!acct) continue;
+    const ts = rowTs_(row, hCol);
+    if (!ts) continue;
+    const ms = ts.getTime();
+    if (ms < lastMs) continue;
+
+    const fp = incrementalRowFingerprint_(row, hCol);
+    let status = "";
+    let candidate = "N";
+    let masterRow = "";
+
+    if (ms > lastMs) {
+      status = "AFTER_NEW";
+      candidate = "Y";
+      afterNew++;
+    } else {
+      if (masterFpAtLast[fp]) {
+        status = "AT_LAST_TS_MATCHED";
+        candidate = "N";
+        masterRow = masterFpAtLast[fp];
+        atMatched++;
+      } else {
+        status = "AT_LAST_TS_UNMATCHED";
+        candidate = "Y";
+        atUnmatched++;
+      }
+    }
+
+    preview.push([
+      status,
+      candidate,
+      r + 1,
+      fp,
+      masterRow,
+      acct,
+      cell_(row, hCol, "ticker"),
+      cell_(row, hCol, "action"),
+      ts,
+      cell_(row, hCol, "quantity"),
+      cell_(row, hCol, "option strike"),
+      cell_(row, hCol, "call/put"),
+    ]);
+  }
+
+  const candidates = afterNew + atUnmatched;
+
+  let sh = ss.getSheetByName("Incremental Candidates Preview");
+  if (!sh) sh = ss.insertSheet("Incremental Candidates Preview");
+  sh.clearContents();
+  sh.getRange(1, 1, preview.length, preview[0].length).setValues(preview);
+  sh.setFrozenRows(1);
+
+  pipelineTimingLog(
+    "previewIncrementalCandidatesFromHelper",
+    t0,
+    "afterNew=" +
+      afterNew +
+      " atMatched=" +
+      atMatched +
+      " atUnmatched=" +
+      atUnmatched +
+      " candidates=" +
+      candidates,
+  );
+
+  uiAlertSafe(
+    "Incremental candidates (read-only).\n\n" +
+      "Master last ts: " +
+      Utilities.formatDate(lastMasterTs, tz, "M/d/yyyy HH:mm:ss") +
+      "\n" +
+      "AFTER new: " +
+      afterNew +
+      "\n" +
+      "AT_LAST_TS matched: " +
+      atMatched +
+      "\n" +
+      "AT_LAST_TS unmatched: " +
+      atUnmatched +
+      "\n" +
+      "Candidates (would enter incremental Step 4): " +
+      candidates +
+      "\n\n" +
+      "On the 9/1/2026 16:41:18 freeze this must be 0 / 1 / 0 / 0.\n" +
+      "Open Incremental Candidates Preview.\n" +
+      "Does not write Staging or Master.",
+  );
+}

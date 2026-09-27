@@ -147,6 +147,10 @@ function onOpen() {
       "Inspect incremental delta (Helper vs Master)",
       "inspectIncrementalDeltaFromMaster",
     )
+    .addItem(
+      "Preview incremental candidates (Helper vs Master)",
+      "previewIncrementalCandidatesFromHelper",
+    )
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")
