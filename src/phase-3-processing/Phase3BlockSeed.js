@@ -487,3 +487,218 @@ function inspectSeedBlocksFromMaster() {
       "Full rebuild is unchanged — populateStagingWithBlockLogicV3() still starts empty.",
   );
 }
+
+/**
+ * Read-only Phase 4 cutoff inspect.
+ * Does not write Master, Staging, or Helper data rows.
+ * Writes sheet "Incremental Delta Preview" (at-or-after cutoff rows only).
+ *
+ * After a first-load replace, helperAfter must be 0.
+ * helperAtLastTs is the same-second bucket — timestamp alone cannot
+ * tell those Helper rows from the Master rows already loaded.
+ */
+function inspectIncrementalDeltaFromMaster() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+  const ui = SpreadsheetApp.getUi();
+
+  const master = ss.getSheetByName("Master");
+  const helper = ss.getSheetByName("Helper");
+  if (!master) {
+    uiAlertSafe("Master sheet not found.");
+    return;
+  }
+  if (!helper) {
+    uiAlertSafe("Helper sheet not found.");
+    return;
+  }
+
+  function headerMap_(grid) {
+    const col = {};
+    grid[0].forEach(function (h, i) {
+      const norm = String(h || "")
+        .trim()
+        .toLowerCase();
+      if (norm) col[norm] = i;
+    });
+    return col;
+  }
+
+  function rowTs_(row, col) {
+    const tsVal =
+      col["trade time stamp"] !== undefined
+        ? row[col["trade time stamp"]]
+        : null;
+    const dateVal =
+      col["trade date"] !== undefined ? row[col["trade date"]] : null;
+    const timeVal =
+      col["trade time"] !== undefined ? row[col["trade time"]] : null;
+    return parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
+  }
+
+  function cell_(row, col, name) {
+    return col[name] !== undefined ? row[col[name]] : "";
+  }
+
+  const mLast = master.getLastRow();
+  const mLastCol = master.getLastColumn();
+  if (mLast < 2) {
+    uiAlertSafe("Master has no data rows.");
+    return;
+  }
+  const mGrid = master.getRange(1, 1, mLast, mLastCol).getValues();
+  const mCol = headerMap_(mGrid);
+  if (mCol["trade time stamp"] === undefined) {
+    uiAlertSafe("Master is missing header Trade Time Stamp.");
+    return;
+  }
+
+  let lastMasterTs = null;
+  let masterAtLast = 0;
+  let masterDataRows = 0;
+  for (let r = 1; r < mGrid.length; r++) {
+    const acct = String(mGrid[r][mCol["account"] || 0] || "").trim();
+    if (!acct) continue;
+    masterDataRows++;
+    const ts = rowTs_(mGrid[r], mCol);
+    if (!ts) continue;
+    if (!lastMasterTs || ts.getTime() > lastMasterTs.getTime()) {
+      lastMasterTs = ts;
+    }
+  }
+  if (!lastMasterTs) {
+    uiAlertSafe("Master has no parseable Trade Time Stamp.");
+    return;
+  }
+  const lastMs = lastMasterTs.getTime();
+  for (let r = 1; r < mGrid.length; r++) {
+    const ts = rowTs_(mGrid[r], mCol);
+    if (ts && ts.getTime() === lastMs) masterAtLast++;
+  }
+
+  const hLast = helper.getLastRow();
+  const hLastCol = helper.getLastColumn();
+  if (hLast < 2) {
+    uiAlertSafe("Helper has no data rows.");
+    return;
+  }
+  const hGrid = helper.getRange(1, 1, hLast, hLastCol).getValues();
+  const hCol = headerMap_(hGrid);
+  if (hCol["trade time stamp"] === undefined) {
+    uiAlertSafe("Helper is missing header Trade Time Stamp.");
+    return;
+  }
+
+  let helperDataRows = 0;
+  let helperAfter = 0;
+  let helperAtLast = 0;
+  let lastHelperTs = null;
+  const preview = [
+    [
+      "Which",
+      "Helper Row",
+      "Account",
+      "Ticker",
+      "Action",
+      "Trade Time Stamp",
+      "Quantity",
+      "Option Strike",
+      "Call/Put",
+      "Position ID",
+    ],
+  ];
+
+  for (let r = 1; r < hGrid.length; r++) {
+    const row = hGrid[r];
+    const acct = String(cell_(row, hCol, "account") || "").trim();
+    if (!acct) continue;
+    helperDataRows++;
+    const ts = rowTs_(row, hCol);
+    if (!ts) continue;
+    if (!lastHelperTs || ts.getTime() > lastHelperTs.getTime()) {
+      lastHelperTs = ts;
+    }
+    const ms = ts.getTime();
+    let which = "";
+    if (ms > lastMs) {
+      helperAfter++;
+      which = "AFTER";
+    } else if (ms === lastMs) {
+      helperAtLast++;
+      which = "AT_LAST_TS";
+    } else {
+      continue;
+    }
+    preview.push([
+      which,
+      r + 1,
+      acct,
+      cell_(row, hCol, "ticker"),
+      cell_(row, hCol, "action"),
+      ts,
+      cell_(row, hCol, "quantity"),
+      cell_(row, hCol, "option strike"),
+      cell_(row, hCol, "call/put"),
+      cell_(row, hCol, "position id"),
+    ]);
+  }
+
+  let sh = ss.getSheetByName("Incremental Delta Preview");
+  if (!sh) sh = ss.insertSheet("Incremental Delta Preview");
+  sh.clearContents();
+  sh.getRange(1, 1, preview.length, preview[0].length).setValues(preview);
+  sh.setFrozenRows(1);
+
+  const lastMasterTxt = Utilities.formatDate(
+    lastMasterTs,
+    tz,
+    "M/d/yyyy HH:mm:ss",
+  );
+  const lastHelperTxt = lastHelperTs
+    ? Utilities.formatDate(lastHelperTs, tz, "M/d/yyyy HH:mm:ss")
+    : "(none)";
+
+  pipelineTimingLog(
+    "inspectIncrementalDeltaFromMaster",
+    t0,
+    "masterData=" +
+      masterDataRows +
+      " helperData=" +
+      helperDataRows +
+      " helperAfter=" +
+      helperAfter +
+      " helperAtLastTs=" +
+      helperAtLast +
+      " masterAtLastTs=" +
+      masterAtLast,
+  );
+
+  uiAlertSafe(
+    "Incremental delta (read-only).\n\n" +
+      "Master last ts: " +
+      lastMasterTxt +
+      "\n" +
+      "Helper last ts: " +
+      lastHelperTxt +
+      "\n" +
+      "Master data rows: " +
+      masterDataRows +
+      "\n" +
+      "Helper data rows: " +
+      helperDataRows +
+      "\n" +
+      "Helper AFTER last Master ts: " +
+      helperAfter +
+      "\n" +
+      "Helper AT last Master ts: " +
+      helperAtLast +
+      "\n" +
+      "Master AT last ts: " +
+      masterAtLast +
+      "\n\n" +
+      "After a first load, AFTER must be 0.\n" +
+      "AT_LAST_TS rows are the same-second bucket.\n" +
+      "Open Incremental Delta Preview.",
+  );
+}

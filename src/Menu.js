@@ -125,7 +125,10 @@ function onOpen() {
   // Data Actions submenu
   const dataActionsMenu = ui
     .createMenu("Data Actions")
-    .addItem("Schwab Mapping to Import and run thru Block Logic", "refreshAllScripts")
+    .addItem(
+      "Schwab Mapping to Import and run thru Block Logic",
+      "refreshAllScripts",
+    )
     .addItem("1. Move Schwab Mapping to Import", "copyMappingToImportByHeaders")
     .addItem("2. Validate and Clean Import", "validateAndCleanImportToHelperV3")
     .addItem("3. Run Block Logic on Helper", "populateStagingWithBlockLogicV3")
@@ -140,6 +143,10 @@ function onOpen() {
     )
     .addItem("Backup Master (Snapshot)", "backupMasterSheet")
     .addItem("Inspect seed blocks from Master", "inspectSeedBlocksFromMaster")
+    .addItem(
+      "Inspect incremental delta (Helper vs Master)",
+      "inspectIncrementalDeltaFromMaster",
+    )
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")
