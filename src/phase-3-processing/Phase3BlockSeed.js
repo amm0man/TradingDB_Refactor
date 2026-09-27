@@ -1725,3 +1725,301 @@ function previewIncrementalStep4ReplayLastPrint() {
       "Did not write Helper / Staging / Master data.",
   );
 }
+
+
+/**
+ * Latest Master timestamp on a calendar day before lastTs's date (sheet TZ).
+ * Used to replay “the last trading day” onto the preview sheet.
+ */
+function findMasterPrevCalendarDayTs_(lastTs) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+  const master = ss.getSheetByName("Master");
+  if (!master || !lastTs) return null;
+
+  const lastDay = Utilities.formatDate(lastTs, tz, "yyyy-MM-dd");
+  const mLast = master.getLastRow();
+  const mLastCol = master.getLastColumn();
+  if (mLast < 2) return null;
+
+  const grid = master.getRange(1, 1, mLast, mLastCol).getValues();
+  const col = {};
+  grid[0].forEach(function (h, i) {
+    const norm = String(h || "")
+      .trim()
+      .toLowerCase();
+    if (norm) col[norm] = i;
+  });
+
+  let prevTs = null;
+  let prevCount = 0;
+  let dayRowCount = 0;
+
+  for (let r = 1; r < grid.length; r++) {
+    const acct = String(grid[r][col["account"] || 0] || "").trim();
+    if (!acct) continue;
+    const tsVal =
+      col["trade time stamp"] !== undefined
+        ? grid[r][col["trade time stamp"]]
+        : null;
+    const dateVal =
+      col["trade date"] !== undefined ? grid[r][col["trade date"]] : null;
+    const timeVal =
+      col["trade time"] !== undefined ? grid[r][col["trade time"]] : null;
+    const ts = parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
+    if (!ts) continue;
+    const day = Utilities.formatDate(ts, tz, "yyyy-MM-dd");
+    if (day === lastDay) {
+      dayRowCount++;
+      continue;
+    }
+    if (!prevTs || ts.getTime() > prevTs.getTime()) {
+      prevTs = ts;
+      prevCount = 1;
+    } else if (ts.getTime() === prevTs.getTime()) {
+      prevCount++;
+    }
+  }
+
+  return {
+    prevTs: prevTs,
+    prevCount: prevCount,
+    lastDay: lastDay,
+    lastDayRowCount: dayRowCount,
+  };
+}
+
+/**
+ * Phase 4: replay every Helper row after the previous calendar day's
+ * last stamp through Step 4 onto Incremental Seeded Preview.
+ * Writes Incremental Replay Compare (one row per preview data row).
+ * Does not write Helper / Staging / Master.
+ */
+function previewIncrementalStep4ReplayLastCalendarDay() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+
+  const pair = findMasterLastTwoTimestamps_();
+  if (!pair) return;
+
+  const dayInfo = findMasterPrevCalendarDayTs_(pair.lastTs);
+  if (!dayInfo || !dayInfo.prevTs) {
+    uiAlertSafe(
+      "Could not find a Master timestamp on an earlier calendar day.",
+    );
+    return;
+  }
+
+  const lastTxt = Utilities.formatDate(pair.lastTs, tz, "M/d/yyyy HH:mm:ss");
+  const prevTxt = Utilities.formatDate(dayInfo.prevTs, tz, "M/d/yyyy HH:mm:ss");
+
+  const collected = collectIncrementalCandidates_(dayInfo.prevTs);
+  if (!collected) return;
+
+  const helperRowNumbers = [];
+  for (let i = 0; i < collected.candidateRows.length; i++) {
+    helperRowNumbers.push(collected.candidateRows[i].helperRow);
+  }
+
+  const blocks = seedBlocksFromMaster(dayInfo.prevTs);
+  const keys = Object.keys(blocks);
+  let live = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const b = blocks[keys[i]];
+    if (Number(b.unit || 0) !== 0 || Number(b.runningQty || 0) !== 0) {
+      live++;
+    }
+  }
+
+  const staging = ss.getSheetByName("Staging");
+  const master = ss.getSheetByName("Master");
+  const stagingLastBefore = staging ? staging.getLastRow() : "";
+  const masterLastBefore = master ? master.getLastRow() : "";
+
+  populateStagingWithBlockLogicV3(blocks, {
+    destSheetName: "Incremental Seeded Preview",
+    helperRowNumbers: helperRowNumbers,
+    muteSuccessAlert: true,
+  });
+
+  const preview = ss.getSheetByName("Incremental Seeded Preview");
+  if (preview && preview.getFrozenRows() !== 3) preview.setFrozenRows(3);
+
+  const stagingLastAfter = staging ? staging.getLastRow() : "";
+  const masterLastAfter = master ? master.getLastRow() : "";
+
+  function headerMap_(grid) {
+    const col = {};
+    grid[0].forEach(function (h, i) {
+      const norm = String(h || "")
+        .trim()
+        .toLowerCase();
+      if (norm) col[norm] = i;
+    });
+    return col;
+  }
+
+  function cell_(row, col, name) {
+    return col[name] !== undefined ? row[col[name]] : "";
+  }
+
+  const fields = [
+    "position id",
+    "trade group id",
+    "running position quantity",
+    "block start flag",
+    "block close flag/p&l",
+    "spread group id",
+  ];
+
+  const compare = [
+    [
+      "Preview Row",
+      "Account",
+      "Ticker",
+      "Action",
+      "Fingerprint",
+      "Field",
+      "Preview",
+      "Master",
+      "OK",
+    ],
+  ];
+  let comparedRows = 0;
+  let mismatch = 0;
+  let missingMaster = 0;
+
+  if (preview && helperRowNumbers.length > 0) {
+    const pLast = preview.getLastRow();
+    const pLastCol = preview.getLastColumn();
+    if (pLast >= 4) {
+      const pGrid = preview.getRange(1, 1, pLast, pLastCol).getValues();
+      const pCol = headerMap_(pGrid);
+      const mLast = master.getLastRow();
+      const mLastCol = master.getLastColumn();
+      const mGrid = master.getRange(1, 1, mLast, mLastCol).getValues();
+      const mCol = headerMap_(mGrid);
+      const mByFp = {};
+      for (let r = 1; r < mGrid.length; r++) {
+        mByFp[incrementalRowFingerprint_(mGrid[r], mCol)] = mGrid[r];
+      }
+
+      for (let r = 3; r < pGrid.length; r++) {
+        const prow = pGrid[r];
+        const acct = String(cell_(prow, pCol, "account") || "").trim();
+        if (!acct) continue;
+        comparedRows++;
+        const fp = incrementalRowFingerprint_(prow, pCol);
+        const mrow = mByFp[fp];
+        if (!mrow) {
+          missingMaster++;
+          mismatch++;
+          compare.push([
+            r + 1,
+            acct,
+            cell_(prow, pCol, "ticker"),
+            cell_(prow, pCol, "action"),
+            fp,
+            "(row)",
+            "",
+            "",
+            "NO_MASTER_FP",
+          ]);
+          continue;
+        }
+        for (let f = 0; f < fields.length; f++) {
+          const name = fields[f];
+          const pv = String(
+            cell_(prow, pCol, name) == null ? "" : cell_(prow, pCol, name),
+          ).trim();
+          const mv = String(
+            cell_(mrow, mCol, name) == null ? "" : cell_(mrow, mCol, name),
+          ).trim();
+          const ok = pv === mv;
+          if (!ok) mismatch++;
+          compare.push([
+            r + 1,
+            acct,
+            cell_(prow, pCol, "ticker"),
+            cell_(prow, pCol, "action"),
+            fp,
+            name,
+            pv,
+            mv,
+            ok ? "OK" : "DIFF",
+          ]);
+        }
+      }
+    }
+  }
+
+  let cmp = ss.getSheetByName("Incremental Replay Compare");
+  if (!cmp) cmp = ss.insertSheet("Incremental Replay Compare");
+  cmp.clearContents();
+  cmp.getRange(1, 1, compare.length, compare[0].length).setValues(compare);
+  cmp.setFrozenRows(1);
+
+  pipelineTimingLog(
+    "previewIncrementalStep4ReplayLastCalendarDay",
+    t0,
+    "lastDay=" +
+      dayInfo.lastDay +
+      " T0=" +
+      prevTxt +
+      " helperRows=" +
+      helperRowNumbers.length +
+      " comparedRows=" +
+      comparedRows +
+      " mismatch=" +
+      mismatch +
+      " seedLive=" +
+      live,
+  );
+
+  uiAlertSafe(
+    "Incremental Step 4 replay last calendar day.\n\n" +
+      "Last day: " +
+      dayInfo.lastDay +
+      " (" +
+      dayInfo.lastDayRowCount +
+      " Master row(s) that day)\n" +
+      "T1: " +
+      lastTxt +
+      "\n" +
+      "T0 (seed as-of, prior day): " +
+      prevTxt +
+      "\n" +
+      "Helper rows sent to Step 4: " +
+      helperRowNumbers.length +
+      "\n" +
+      "Preview rows compared: " +
+      comparedRows +
+      "\n" +
+      "Field diffs + missing Master fp: " +
+      mismatch +
+      "\n" +
+      "Missing Master fingerprint: " +
+      missingMaster +
+      "\n" +
+      "Seed keys / live as-of T0: " +
+      keys.length +
+      " / " +
+      live +
+      "\n" +
+      "Staging last row before/after: " +
+      stagingLastBefore +
+      " / " +
+      stagingLastAfter +
+      "\n" +
+      "Master last row before/after: " +
+      masterLastBefore +
+      " / " +
+      masterLastAfter +
+      "\n\n" +
+      "Open Incremental Replay Compare and filter OK = DIFF.\n" +
+      "DOI rows may appear on preview with blank TG — that is Step 4 skip.\n" +
+      "Did not write Helper / Staging / Master data.",
+  );
+}
+

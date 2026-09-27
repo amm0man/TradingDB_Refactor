@@ -167,6 +167,10 @@ function onOpen() {
       "Preview incremental Step 4 replay last print",
       "previewIncrementalStep4ReplayLastPrint",
     )
+    .addItem(
+      "Preview incremental Step 4 replay last calendar day",
+      "previewIncrementalStep4ReplayLastCalendarDay",
+    )
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")
