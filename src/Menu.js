@@ -155,6 +155,10 @@ function onOpen() {
       "Incremental dry run (0-row proof)",
       "runIncrementalFromHelperDryRun",
     )
+    .addItem(
+      "Preview incremental seeded output (headers only)",
+      "previewIncrementalSeededOutputFromHelper",
+    )
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")

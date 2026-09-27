@@ -234,12 +234,7 @@ function seedBlocksFromMaster() {
     if (norm) col[norm] = i;
   });
 
-  const need = [
-    "account",
-    "ticker",
-    "trade type",
-    "running position quantity",
-  ];
+  const need = ["account", "ticker", "trade type", "running position quantity"];
   for (let i = 0; i < need.length; i++) {
     if (col[need[i]] === undefined) {
       throw new Error(
@@ -271,9 +266,7 @@ function seedBlocksFromMaster() {
         ? row[col["block close flag/p&l"]]
         : 0;
     const startRaw =
-      col["block start flag"] !== undefined
-        ? row[col["block start flag"]]
-        : 0;
+      col["block start flag"] !== undefined ? row[col["block start flag"]] : 0;
     const isClose = closeRaw === 1 || closeRaw === "1";
     const isStart = startRaw === 1 || startRaw === "1";
 
@@ -305,7 +298,9 @@ function seedBlocksFromMaster() {
       b.positionId = String(row[col["position id"]] || b.positionId || "");
     }
     if (col["strategy type"] !== undefined && !isClose) {
-      b.strategyType = String(row[col["strategy type"]] || b.strategyType || "");
+      b.strategyType = String(
+        row[col["strategy type"]] || b.strategyType || "",
+      );
     }
 
     const flat = isClose || Math.abs(runQty) < 1e-8;
@@ -725,7 +720,8 @@ function incrementalRowFingerprint_(row, col) {
     .toUpperCase();
   const ts = (function () {
     const tsVal = cell("trade time stamp");
-    if (tsVal instanceof Date && !isNaN(tsVal.getTime())) return tsVal.getTime();
+    if (tsVal instanceof Date && !isNaN(tsVal.getTime()))
+      return tsVal.getTime();
     return "";
   })();
   const qtyN = toNum(cell("quantity"));
@@ -1169,5 +1165,124 @@ function runIncrementalFromHelperDryRun() {
       "No Helper / Staging / Master write.\n" +
       "populateStagingWithBlockLogicV3 was not called.\n" +
       "Expect seed keys 2514 and live 82 on this freeze.",
+  );
+}
+
+/**
+ * Empty-output proof for Phase 4.
+ * Writes sheet "Incremental Seeded Preview" with Helper header rows 1-3
+ * and zero data rows when candidates = 0.
+ *
+ * Does not write Helper, Staging, or Master.
+ * Does not call populateStagingWithBlockLogicV3.
+ *
+ * Why not call Step 4: that function always reads all of Helper and
+ * replace-writes all of Staging. Seed + filter inside it is a later slice.
+ *
+ * If candidates > 0 this STOPS after the same header-only write so
+ * Staging cannot be touched by accident.
+ */
+function previewIncrementalSeededOutputFromHelper() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+
+  const collected = collectIncrementalCandidates_();
+  if (!collected) return;
+
+  const helper = ss.getSheetByName("Helper");
+  const lastCol = helper.getLastColumn();
+  const headerGrid = helper.getRange(1, 1, 3, lastCol).getValues();
+
+  let sh = ss.getSheetByName("Incremental Seeded Preview");
+  if (!sh) sh = ss.insertSheet("Incremental Seeded Preview");
+  sh.clearContents();
+  sh.getRange(1, 1, 3, lastCol).setValues(headerGrid);
+  sh.setFrozenRows(3);
+
+  const lastTxt = Utilities.formatDate(
+    collected.lastMasterTs,
+    tz,
+    "M/d/yyyy HH:mm:ss",
+  );
+  const blocks = seedBlocksFromMaster();
+  const keys = Object.keys(blocks);
+  let live = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const b = blocks[keys[i]];
+    if (Number(b.unit || 0) !== 0 || Number(b.runningQty || 0) !== 0) {
+      live++;
+    }
+  }
+
+  // Rows 2-3 on Helper/Staging are blank spacers. getLastRow() skips
+  // them and reports 1 even after we write 3 header rows. Frozen rows
+  // and the range we set are the real proof.
+  const wroteHeaderRows = 3;
+  const previewLast = sh.getLastRow();
+  const previewFrozen = sh.getFrozenRows();
+
+  pipelineTimingLog(
+    "previewIncrementalSeededOutputFromHelper",
+    t0,
+    "candidates=" +
+      collected.candidates +
+      " wroteHeaderRows=" +
+      wroteHeaderRows +
+      " previewGetLastRow=" +
+      previewLast +
+      " frozen=" +
+      previewFrozen +
+      " seedKeys=" +
+      keys.length +
+      " live=" +
+      live,
+  );
+
+  if (collected.candidates !== 0) {
+    uiAlertSafe(
+      "Incremental seeded preview STOPPED.\n\n" +
+        "Master last ts: " +
+        lastTxt +
+        "\n" +
+        "Candidates: " +
+        collected.candidates +
+        "\n" +
+        "AFTER new: " +
+        collected.afterNew +
+        "\n" +
+        "AT_LAST_TS unmatched: " +
+        collected.atUnmatched +
+        "\n\n" +
+        "Wrote Helper headers only to Incremental Seeded Preview.\n" +
+        "Did not run block logic. Staging and Master were not written.",
+    );
+    return;
+  }
+
+  uiAlertSafe(
+    "Incremental seeded preview OK.\n\n" +
+      "Master last ts: " +
+      lastTxt +
+      "\n" +
+      "Candidates: 0\n" +
+      "Wrote header rows: " +
+      wroteHeaderRows +
+      "\n" +
+      "Frozen rows: " +
+      previewFrozen +
+      " (must be 3)\n" +
+      "getLastRow: " +
+      previewLast +
+      " (1 is OK if rows 2-3 are blank)\n" +
+      "Seed keys: " +
+      keys.length +
+      "\n" +
+      "Seed live: " +
+      live +
+      "\n\n" +
+      "No Helper / Staging / Master write.\n" +
+      "populateStagingWithBlockLogicV3 was not called.\n" +
+      "Expect frozen 3, keys 2514, live 82.",
   );
 }
