@@ -433,3 +433,255 @@ function tosDescribeCombinedSourceFiles_(dt, lt, tradesCombined, topCombined) {
     (onlyDrive.length ? onlyDrive.join(", ") : "none")
   );
 }
+
+/**
+ * Incremental Combined write.
+ *
+ * Same parse + key compare as previewIncrementalCombinedMergeBothAccounts.
+ * Appends only rows whose dedupe key is not already on Combined.
+ * Does not call tosImportBothSectionsFromFolderBothAccounts
+ * (that path still replaceEntireSheet: true).
+ *
+ * On this freeze NEW is 0 / 0, so this is a no-op.
+ */
+function mergeIncrementalCombinedNewRowsBothAccounts() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  const tradesCombined = ss.getSheetByName(
+    tosConfig.tradesCombinedSheetName,
+  );
+  const topCombined = ss.getSheetByName(tosConfig.topCombinedSheetName);
+  const tradesLastBefore = tradesCombined ? tradesCombined.getLastRow() : "";
+  const topLastBefore = topCombined ? topCombined.getLastRow() : "";
+
+  const dt = tosImportBothSectionsFromFolder(
+    tosGetAccountFolderIdPropKey("DT"),
+    "DT",
+    { skipWrite: true },
+  );
+  const lt = tosImportBothSectionsFromFolder(
+    tosGetAccountFolderIdPropKey("LT"),
+    "LT",
+    { skipWrite: true },
+  );
+
+  const tradesHeader =
+    (dt && dt.tradesHeader) || (lt && lt.tradesHeader) || null;
+  const topHeader = (dt && dt.topHeader) || (lt && lt.topHeader) || null;
+  const tradesAllRows = []
+    .concat((dt && dt.tradesAllRows) || [])
+    .concat((lt && lt.tradesAllRows) || []);
+  const topRowsAll = []
+    .concat((dt && dt.topRowsAll) || [])
+    .concat((lt && lt.topRowsAll) || []);
+  const fileCount =
+    Number((dt && dt.fileCount) || 0) + Number((lt && lt.fileCount) || 0);
+
+  const tradesCtx = importIssuesStart("mergeIncrementalCombined:Trades");
+  const topCtx = importIssuesStart("mergeIncrementalCombined:Top");
+  importIssuesSetMetric(tradesCtx, "Account", "DT+LT");
+  importIssuesSetMetric(topCtx, "Account", "DT+LT");
+
+  const parsedTrades = tosTradesWriteCombinedFromParsed(
+    tradesCtx,
+    "DT+LT",
+    "",
+    "DT+LT",
+    fileCount,
+    tradesAllRows,
+    tradesHeader,
+    { buildOnly: true },
+  );
+  const parsedTop = tosTopWriteCombinedFromParsed(
+    topCtx,
+    "DT+LT",
+    "",
+    "DT+LT",
+    fileCount,
+    topRowsAll,
+    topHeader,
+    { buildOnly: true },
+  );
+
+  const tradesCmp = tosDiffParsedCombinedAgainstSheet_(
+    parsedTrades,
+    tradesCombined,
+    tradesHeader,
+    "TRADES",
+  );
+  const topCmp = tosDiffParsedCombinedAgainstSheet_(
+    parsedTop,
+    topCombined,
+    topHeader,
+    "TOP",
+  );
+
+  if (tradesCmp.newCount === 0 && topCmp.newCount === 0) {
+    pipelineTimingLog(
+      "mergeIncrementalCombinedNewRowsBothAccounts",
+      t0,
+      "no-op tradesNew=0 topNew=0",
+    );
+    uiAlertSafe(
+      "Incremental Combined merge skipped — no new rows.\n\n" +
+        "Drive CSV files parsed: " +
+        fileCount +
+        "\n" +
+        "TOS Trades - Combined last row before/after: " +
+        tradesLastBefore +
+        " / " +
+        tradesLastBefore +
+        "\n" +
+        "TOS Top - Combined last row before/after: " +
+        topLastBefore +
+        " / " +
+        topLastBefore +
+        "\n" +
+        "Trades NEW: 0\n" +
+        "Top NEW: 0\n\n" +
+        "Did not write Combined.\n" +
+        "Did not call tosImportBothSectionsFromFolderBothAccounts.",
+    );
+    return;
+  }
+
+  const resp = ui.alert(
+    "Merge new Combined rows",
+    "Trades NEW: " +
+      tradesCmp.newCount +
+      "\n" +
+      "Top NEW: " +
+      topCmp.newCount +
+      "\n\n" +
+      "This appends those rows onto Combined.\n" +
+      "It does not replace the Combined sheets.\n\n" +
+      "Cancel if those counts look wrong.",
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (resp !== ui.Button.OK) {
+    pipelineTimingLog(
+      "mergeIncrementalCombinedNewRowsBothAccounts",
+      t0,
+      "cancelled tradesNew=" +
+        tradesCmp.newCount +
+        " topNew=" +
+        topCmp.newCount,
+    );
+    return;
+  }
+
+  tosAppendCombinedNewRows_(
+    tradesCombined,
+    parsedTrades && parsedTrades[0],
+    tradesCmp.newRows,
+    "TRADES",
+  );
+  tosAppendCombinedNewRows_(
+    topCombined,
+    parsedTop && parsedTop[0],
+    topCmp.newRows,
+    "TOP",
+  );
+
+  pipelineTimingLog(
+    "mergeIncrementalCombinedNewRowsBothAccounts",
+    t0,
+    "appended trades=" +
+      tradesCmp.newCount +
+      " top=" +
+      topCmp.newCount +
+      " tradesRow=" +
+      (tradesCombined ? tradesCombined.getLastRow() : "") +
+      " topRow=" +
+      (topCombined ? topCombined.getLastRow() : ""),
+  );
+
+  uiAlertSafe(
+    "Incremental Combined merge OK.\n\n" +
+      "Trades appended: " +
+      tradesCmp.newCount +
+      "\n" +
+      "Top appended: " +
+      topCmp.newCount +
+      "\n" +
+      "TOS Trades - Combined last row before/after: " +
+      tradesLastBefore +
+      " / " +
+      (tradesCombined ? tradesCombined.getLastRow() : "") +
+      "\n" +
+      "TOS Top - Combined last row before/after: " +
+      topLastBefore +
+      " / " +
+      (topCombined ? topCombined.getLastRow() : "") +
+      "\n\n" +
+      "Did not replace Combined.\n" +
+      "Did not call tosImportBothSectionsFromFolderBothAccounts.",
+  );
+}
+
+function tosAppendCombinedNewRows_(sheet, header, newRows, kind) {
+  if (!sheet || !header || !newRows || !newRows.length) return;
+
+  const rows = newRows.map(function (r) {
+    return r.slice();
+  });
+
+  if (kind === "TOP") {
+    const fiDateCol = header.indexOf("DATE");
+    const fiTimeCol = header.indexOf("TIME");
+    const fiTimeRawCol = header.indexOf("TimeRaw");
+    if (fiDateCol >= 0 && fiTimeCol >= 0 && fiTimeRawCol >= 0) {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const timeRawVal = row[fiTimeRawCol];
+        const dateIso = tosTopNormalizeDateToIso(row[fiDateCol]);
+        let timeRawStr;
+        if (timeRawVal instanceof Date && !isNaN(timeRawVal.getTime())) {
+          const h = String(timeRawVal.getHours()).padStart(2, "0");
+          const m = String(timeRawVal.getMinutes()).padStart(2, "0");
+          const s = String(timeRawVal.getSeconds()).padStart(2, "0");
+          timeRawStr = h + m + s;
+        } else {
+          timeRawStr = normalizeTimeHHmmss(String(timeRawVal ?? "").trim());
+        }
+        const timeCorrected = tosEtToCtHHmmss(timeRawStr, dateIso ?? "");
+        if (timeCorrected) row[fiTimeCol] = timeCorrected;
+      }
+    }
+  }
+
+  const writeCols = Math.min(sheet.getLastColumn(), header.length);
+  const firstEmpty = sheet.getLastRow() + 1;
+  const out = rows.map(function (r) {
+    return r.slice(0, writeCols);
+  });
+  sheet.getRange(firstEmpty, 1, out.length, writeCols).setValues(out);
+
+  if (kind === "TRADES") {
+    tosFormatHeaderColumnAsText(
+      sheet,
+      sheet.getRange(1, 1, 1, writeCols).getValues()[0],
+      "Exec Time",
+      firstEmpty + out.length - 1,
+      firstEmpty,
+    );
+    tosFormatHeaderColumnAsText(
+      sheet,
+      sheet.getRange(1, 1, 1, writeCols).getValues()[0],
+      "Symbol",
+      firstEmpty + out.length - 1,
+      firstEmpty,
+    );
+  } else {
+    tosFormatHeaderColumnsAsText(
+      sheet,
+      sheet.getRange(1, 1, 1, writeCols).getValues()[0],
+      ["TIME", "TimeRaw"],
+      firstEmpty + out.length - 1,
+      firstEmpty,
+    );
+  }
+}
+

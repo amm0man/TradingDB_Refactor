@@ -32,6 +32,10 @@ function onOpen() {
       "Append incremental preview → Master (candidates only)",
       "appendIncrementalPreviewToMaster",
     )
+    .addItem(
+      "Merge incremental Combined (new rows only)",
+      "mergeIncrementalCombinedNewRowsBothAccounts",
+    )
     .addSeparator()
     .addSeparator()
     .addItem(
