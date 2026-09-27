@@ -216,12 +216,16 @@ function flattenRetiredRenameSource_(blocks, oldKey, blockNumHint) {
  *
  * Does not write Staging or Master.
  */
-function seedBlocksFromMaster() {
+function seedBlocksFromMaster(asOfTs) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const master = ss.getSheetByName("Master");
   if (!master) throw new Error('Sheet "Master" not found.');
 
   const tz = ss.getSpreadsheetTimeZone();
+  const asOfMs =
+    asOfTs instanceof Date && !isNaN(asOfTs.getTime())
+      ? asOfTs.getTime()
+      : null;
   const lastRow = master.getLastRow();
   const lastCol = master.getLastColumn();
   if (lastRow < 2) return {};
@@ -254,6 +258,34 @@ function seedBlocksFromMaster() {
       .trim()
       .toUpperCase();
     if (!acct) continue;
+    if (asOfMs !== null) {
+      const tsVal =
+        col["trade time stamp"] !== undefined
+          ? row[col["trade time stamp"]]
+          : null;
+      const dateVal =
+        col["trade date"] !== undefined ? row[col["trade date"]] : null;
+      const timeVal =
+        col["trade time"] !== undefined ? row[col["trade time"]] : null;
+      const rowTs = parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
+      if (rowTs && rowTs.getTime() > asOfMs) continue;
+    }
+
+    // Same skip Step 4 uses. DOI / cash dividend / sweep rows have
+    // blank running qty. Treating them as last-row-per-key would
+    // flatten a live stock lot (LT PFE 9/1/2026 07:24 DOI → TG002).
+    // DRIP BUY TO OPEN is not skipped (Corporate Actions contains DRIP).
+    const seedAction = col["action"] !== undefined ? row[col["action"]] : "";
+    const seedTicker = col["ticker"] !== undefined ? row[col["ticker"]] : "";
+    const seedCorp =
+      col["corporate actions"] !== undefined
+        ? row[col["corporate actions"]]
+        : "";
+    const seedAcctAct =
+      col["account actions"] !== undefined ? row[col["account actions"]] : "";
+    if (isCashLedgerNoBlock_(seedAction, seedTicker, seedCorp, seedAcctAct)) {
+      continue;
+    }
 
     const key = blockKeyFromStagingLikeRow_(row, col, tz);
     if (!key || key === "|" || key.charAt(key.length - 1) === "|") continue;
@@ -954,7 +986,7 @@ function previewIncrementalCandidatesFromHelper() {
  * candidateRows = Helper rows that would enter incremental Step 4.
  * Preview sheet is NOT written here.
  */
-function collectIncrementalCandidates_() {
+function collectIncrementalCandidates_(cutoffTs) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const master = ss.getSheetByName("Master");
   const helper = ss.getSheetByName("Helper");
@@ -1004,13 +1036,17 @@ function collectIncrementalCandidates_() {
   const mCol = headerMap_(mGrid);
 
   let lastMasterTs = null;
-  for (let r = 1; r < mGrid.length; r++) {
-    const acct = String(mGrid[r][mCol["account"] || 0] || "").trim();
-    if (!acct) continue;
-    const ts = rowTs_(mGrid[r], mCol);
-    if (!ts) continue;
-    if (!lastMasterTs || ts.getTime() > lastMasterTs.getTime()) {
-      lastMasterTs = ts;
+  if (cutoffTs instanceof Date && !isNaN(cutoffTs.getTime())) {
+    lastMasterTs = cutoffTs;
+  } else {
+    for (let r = 1; r < mGrid.length; r++) {
+      const acct = String(mGrid[r][mCol["account"] || 0] || "").trim();
+      if (!acct) continue;
+      const ts = rowTs_(mGrid[r], mCol);
+      if (!ts) continue;
+      if (!lastMasterTs || ts.getTime() > lastMasterTs.getTime()) {
+        lastMasterTs = ts;
+      }
     }
   }
   if (!lastMasterTs) {
@@ -1403,6 +1439,289 @@ function previewIncrementalStep4FromHelper() {
       "\n\n" +
       "On this freeze expect candidates 0, keys 2514, live 82,\n" +
       "Staging 15836 / 15836, Master 15834 / 15834.\n" +
+      "Did not write Helper / Staging / Master data.",
+  );
+}
+
+/**
+ * Last two distinct Master timestamps.
+ * T1 = newest print on Master. T0 = previous distinct ms.
+ * Replay seeds as-of T0 and sends Helper rows after T0 through Step 4.
+ */
+function findMasterLastTwoTimestamps_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const master = ss.getSheetByName("Master");
+  if (!master) {
+    uiAlertSafe("Master sheet not found.");
+    return null;
+  }
+
+  const mLast = master.getLastRow();
+  const mLastCol = master.getLastColumn();
+  if (mLast < 2) {
+    uiAlertSafe("Master has no data rows.");
+    return null;
+  }
+
+  const grid = master.getRange(1, 1, mLast, mLastCol).getValues();
+  const col = {};
+  grid[0].forEach(function (h, i) {
+    const norm = String(h || "")
+      .trim()
+      .toLowerCase();
+    if (norm) col[norm] = i;
+  });
+
+  let lastTs = null;
+  let prevTs = null;
+  let lastCount = 0;
+  let prevCount = 0;
+
+  for (let r = 1; r < grid.length; r++) {
+    const acct = String(grid[r][col["account"] || 0] || "").trim();
+    if (!acct) continue;
+    const tsVal =
+      col["trade time stamp"] !== undefined
+        ? grid[r][col["trade time stamp"]]
+        : null;
+    const dateVal =
+      col["trade date"] !== undefined ? grid[r][col["trade date"]] : null;
+    const timeVal =
+      col["trade time"] !== undefined ? grid[r][col["trade time"]] : null;
+    const ts = parseTradeTimeStamp(tsVal, dateVal, timeVal, ss);
+    if (!ts) continue;
+    const ms = ts.getTime();
+    if (!lastTs || ms > lastTs.getTime()) {
+      prevTs = lastTs;
+      prevCount = lastCount;
+      lastTs = ts;
+      lastCount = 1;
+    } else if (ms === lastTs.getTime()) {
+      lastCount++;
+    } else if (prevTs && ms === prevTs.getTime()) {
+      prevCount++;
+    } else if (!prevTs || ms > prevTs.getTime()) {
+      prevTs = ts;
+      prevCount = 1;
+    }
+  }
+
+  if (!lastTs) {
+    uiAlertSafe("Master has no parseable Trade Time Stamp.");
+    return null;
+  }
+  if (!prevTs) {
+    uiAlertSafe(
+      "Master has only one distinct timestamp. Cannot replay last print.",
+    );
+    return null;
+  }
+
+  return {
+    lastTs: lastTs,
+    prevTs: prevTs,
+    lastCount: lastCount,
+    prevCount: prevCount,
+  };
+}
+
+/**
+ * Phase 4 correctness slice. Preview sheet only.
+ *
+ * Seed Master as-of the previous distinct timestamp (T0).
+ * Run Helper rows after T0 through Step 4.
+ * Compare stamped fields to the matching Master row.
+ *
+ * Does not write Helper, Staging, or Master.
+ * Does not call refreshAllScripts.
+ */
+function previewIncrementalStep4ReplayLastPrint() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+
+  const pair = findMasterLastTwoTimestamps_();
+  if (!pair) return;
+
+  const lastTxt = Utilities.formatDate(pair.lastTs, tz, "M/d/yyyy HH:mm:ss");
+  const prevTxt = Utilities.formatDate(pair.prevTs, tz, "M/d/yyyy HH:mm:ss");
+
+  const collected = collectIncrementalCandidates_(pair.prevTs);
+  if (!collected) return;
+
+  const helperRowNumbers = [];
+  for (let i = 0; i < collected.candidateRows.length; i++) {
+    helperRowNumbers.push(collected.candidateRows[i].helperRow);
+  }
+
+  const blocks = seedBlocksFromMaster(pair.prevTs);
+  const keys = Object.keys(blocks);
+  let live = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const b = blocks[keys[i]];
+    if (Number(b.unit || 0) !== 0 || Number(b.runningQty || 0) !== 0) {
+      live++;
+    }
+  }
+
+  const staging = ss.getSheetByName("Staging");
+  const master = ss.getSheetByName("Master");
+  const stagingLastBefore = staging ? staging.getLastRow() : "";
+  const masterLastBefore = master ? master.getLastRow() : "";
+
+  populateStagingWithBlockLogicV3(blocks, {
+    destSheetName: "Incremental Seeded Preview",
+    helperRowNumbers: helperRowNumbers,
+    muteSuccessAlert: true,
+  });
+
+  const preview = ss.getSheetByName("Incremental Seeded Preview");
+  if (preview && preview.getFrozenRows() !== 3) preview.setFrozenRows(3);
+
+  const stagingLastAfter = staging ? staging.getLastRow() : "";
+  const masterLastAfter = master ? master.getLastRow() : "";
+
+  function headerMap_(grid) {
+    const col = {};
+    grid[0].forEach(function (h, i) {
+      const norm = String(h || "")
+        .trim()
+        .toLowerCase();
+      if (norm) col[norm] = i;
+    });
+    return col;
+  }
+
+  function cell_(row, col, name) {
+    return col[name] !== undefined ? row[col[name]] : "";
+  }
+
+  let compareTxt = "No preview data row to compare.";
+  let mismatch = 0;
+  if (preview && helperRowNumbers.length > 0) {
+    const pLast = preview.getLastRow();
+    const pLastCol = preview.getLastColumn();
+    if (pLast >= 4) {
+      const pGrid = preview.getRange(1, 1, pLast, pLastCol).getValues();
+      const pCol = headerMap_(pGrid);
+      const mLast = master.getLastRow();
+      const mLastCol = master.getLastColumn();
+      const mGrid = master.getRange(1, 1, mLast, mLastCol).getValues();
+      const mCol = headerMap_(mGrid);
+      const mByFp = {};
+      for (let r = 1; r < mGrid.length; r++) {
+        mByFp[incrementalRowFingerprint_(mGrid[r], mCol)] = mGrid[r];
+      }
+
+      const fields = [
+        "position id",
+        "trade group id",
+        "running position quantity",
+        "block start flag",
+        "block close flag/p&l",
+        "spread group id",
+      ];
+      const lines = [];
+      for (let r = 3; r < pGrid.length; r++) {
+        const prow = pGrid[r];
+        const fp = incrementalRowFingerprint_(prow, pCol);
+        const mrow = mByFp[fp];
+        lines.push(
+          "Preview row " +
+            (r + 1) +
+            " " +
+            String(cell_(prow, pCol, "account") || "").trim() +
+            " " +
+            String(cell_(prow, pCol, "ticker") || "").trim() +
+            " " +
+            String(cell_(prow, pCol, "action") || "").trim(),
+        );
+        if (!mrow) {
+          mismatch++;
+          lines.push("  NO matching Master fingerprint");
+          continue;
+        }
+        for (let f = 0; f < fields.length; f++) {
+          const name = fields[f];
+          const pv = String(
+            cell_(prow, pCol, name) == null ? "" : cell_(prow, pCol, name),
+          ).trim();
+          const mv = String(
+            cell_(mrow, mCol, name) == null ? "" : cell_(mrow, mCol, name),
+          ).trim();
+          const same = pv === mv;
+          if (!same) mismatch++;
+          lines.push(
+            "  " +
+              name +
+              ": preview=[" +
+              pv +
+              "] master=[" +
+              mv +
+              "] " +
+              (same ? "OK" : "DIFF"),
+          );
+        }
+      }
+      compareTxt = lines.join("\n");
+    }
+  }
+
+  pipelineTimingLog(
+    "previewIncrementalStep4ReplayLastPrint",
+    t0,
+    "T0=" +
+      prevTxt +
+      " T1=" +
+      lastTxt +
+      " candidates=" +
+      collected.candidates +
+      " helperRows=" +
+      helperRowNumbers.length +
+      " seedKeys=" +
+      keys.length +
+      " live=" +
+      live +
+      " mismatch=" +
+      mismatch,
+  );
+
+  uiAlertSafe(
+    "Incremental Step 4 replay last print.\n\n" +
+      "T1 (last Master ts): " +
+      lastTxt +
+      " (" +
+      pair.lastCount +
+      " Master row(s))\n" +
+      "T0 (seed as-of): " +
+      prevTxt +
+      " (" +
+      pair.prevCount +
+      " Master row(s) at T0)\n" +
+      "Helper rows sent to Step 4: " +
+      helperRowNumbers.length +
+      "\n" +
+      "Seed keys / live as-of T0: " +
+      keys.length +
+      " / " +
+      live +
+      "\n" +
+      "Field diffs vs Master: " +
+      mismatch +
+      "\n" +
+      "Staging last row before/after: " +
+      stagingLastBefore +
+      " / " +
+      stagingLastAfter +
+      "\n" +
+      "Master last row before/after: " +
+      masterLastBefore +
+      " / " +
+      masterLastAfter +
+      "\n\n" +
+      compareTxt +
+      "\n\n" +
+      "Open Incremental Seeded Preview.\n" +
       "Did not write Helper / Staging / Master data.",
   );
 }

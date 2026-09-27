@@ -163,6 +163,10 @@ function onOpen() {
       "Preview incremental Step 4 (preview sheet only)",
       "previewIncrementalStep4FromHelper",
     )
+    .addItem(
+      "Preview incremental Step 4 replay last print",
+      "previewIncrementalStep4ReplayLastPrint",
+    )
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")
