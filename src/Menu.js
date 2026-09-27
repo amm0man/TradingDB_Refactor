@@ -24,6 +24,11 @@ function onOpen() {
       "Preview incremental Step 4 (preview sheet only)",
       "previewIncrementalStep4FromHelper",
     )
+    .addItem(
+      "Append incremental preview → Master (candidates only)",
+      "appendIncrementalPreviewToMaster",
+    )
+    .addSeparator()
     .addSeparator()
     .addItem(
       "Debug: replay last print",
@@ -153,8 +158,6 @@ function onOpen() {
     .addSubMenu(tosFullImportMenu)
     .addSubMenu(schwabFullMenu)
     .addSubMenu(phase3FullMenu);
-
- 
 
   ui.createMenu("DB Tools")
     .addSubMenu(incrementalMenu)
