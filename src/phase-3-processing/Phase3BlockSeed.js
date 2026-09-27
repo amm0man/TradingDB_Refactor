@@ -8,6 +8,7 @@
  *   parseSymbolChangeFromMasterRow_ — Family S: FROM/TO on a Master SYMBOL CHANGE row
  *   seedBlocksFromMaster()         — rebuild blocks{} from Master last-row state
  *   inspectSeedBlocksFromMaster()  — menu: preview only (writes Block Seed Preview)
+ *   previewIncrementalStep4FromHelper() — menu: seed + subset Step 4 → preview sheet
  *
  * populateStagingWithBlockLogicV3(seedBlocks) still starts from {} when
  * called with no argument. Passing a seed is for a later incremental function.
@@ -1284,5 +1285,124 @@ function previewIncrementalSeededOutputFromHelper() {
       "No Helper / Staging / Master write.\n" +
       "populateStagingWithBlockLogicV3 was not called.\n" +
       "Expect frozen 3, keys 2514, live 82.",
+  );
+}
+
+/**
+ * Phase 4: run Step 4 on the incremental candidate subset only.
+ * Writes Incremental Seeded Preview. Does not write Helper / Staging / Master.
+ * Does not change refreshAllScripts (that must stay a no-arg full rebuild).
+ *
+ * On the 9/1/2026 16:41:18 freeze candidates = 0, so the preview stays
+ * 3 Helper header rows and 0 data rows. That is the proof that seed +
+ * subset Step 4 can run without touching Staging.
+ */
+function previewIncrementalStep4FromHelper() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+
+  const collected = collectIncrementalCandidates_();
+  if (!collected) return;
+
+  const helperRowNumbers = [];
+  for (let i = 0; i < collected.candidateRows.length; i++) {
+    helperRowNumbers.push(collected.candidateRows[i].helperRow);
+  }
+
+  const lastTxt = Utilities.formatDate(
+    collected.lastMasterTs,
+    tz,
+    "M/d/yyyy HH:mm:ss",
+  );
+
+  const blocks = seedBlocksFromMaster();
+  const keys = Object.keys(blocks);
+  let live = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const b = blocks[keys[i]];
+    if (Number(b.unit || 0) !== 0 || Number(b.runningQty || 0) !== 0) {
+      live++;
+    }
+  }
+
+  const staging = ss.getSheetByName("Staging");
+  const master = ss.getSheetByName("Master");
+  const stagingLastBefore = staging ? staging.getLastRow() : "";
+  const masterLastBefore = master ? master.getLastRow() : "";
+
+  populateStagingWithBlockLogicV3(blocks, {
+    destSheetName: "Incremental Seeded Preview",
+    helperRowNumbers: helperRowNumbers,
+    muteSuccessAlert: true,
+  });
+
+  const preview = ss.getSheetByName("Incremental Seeded Preview");
+  const previewLast = preview ? preview.getLastRow() : "";
+  const previewFrozen = preview ? preview.getFrozenRows() : "";
+  const stagingLastAfter = staging ? staging.getLastRow() : "";
+  const masterLastAfter = master ? master.getLastRow() : "";
+
+  if (preview && preview.getFrozenRows() !== 3) {
+    preview.setFrozenRows(3);
+  }
+
+  pipelineTimingLog(
+    "previewIncrementalStep4FromHelper",
+    t0,
+    "candidates=" +
+      collected.candidates +
+      " helperRows=" +
+      helperRowNumbers.length +
+      " previewGetLastRow=" +
+      previewLast +
+      " seedKeys=" +
+      keys.length +
+      " live=" +
+      live,
+  );
+
+  uiAlertSafe(
+    "Incremental Step 4 preview OK.\n\n" +
+      "Master last ts: " +
+      lastTxt +
+      "\n" +
+      "Candidates: " +
+      collected.candidates +
+      "\n" +
+      "AFTER new: " +
+      collected.afterNew +
+      "\n" +
+      "AT_LAST_TS unmatched: " +
+      collected.atUnmatched +
+      "\n" +
+      "Helper rows sent to Step 4: " +
+      helperRowNumbers.length +
+      "\n" +
+      "Preview getLastRow: " +
+      previewLast +
+      " (1 is OK if rows 2-3 are blank)\n" +
+      "Preview frozen: " +
+      (preview ? preview.getFrozenRows() : "") +
+      "\n" +
+      "Seed keys: " +
+      keys.length +
+      "\n" +
+      "Seed live: " +
+      live +
+      "\n" +
+      "Staging last row before/after: " +
+      stagingLastBefore +
+      " / " +
+      stagingLastAfter +
+      "\n" +
+      "Master last row before/after: " +
+      masterLastBefore +
+      " / " +
+      masterLastAfter +
+      "\n\n" +
+      "On this freeze expect candidates 0, keys 2514, live 82,\n" +
+      "Staging 15836 / 15836, Master 15834 / 15834.\n" +
+      "Did not write Helper / Staging / Master data.",
   );
 }

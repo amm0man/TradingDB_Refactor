@@ -159,6 +159,10 @@ function onOpen() {
       "Preview incremental seeded output (headers only)",
       "previewIncrementalSeededOutputFromHelper",
     )
+    .addItem(
+      "Preview incremental Step 4 (preview sheet only)",
+      "previewIncrementalStep4FromHelper",
+    )
     .addSeparator()
     .addItem("Blank Import", "blankImport")
     .addItem("Blank Helper", "blankHelper")

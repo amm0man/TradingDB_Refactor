@@ -206,18 +206,31 @@ function isCashLedgerNoBlock_(
   return false;
 }
 
-function populateStagingWithBlockLogicV3(seedBlocks) {
+function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const helperSheet = ss.getSheetByName("Helper");
   const stagingSheet = ss.getSheetByName("Staging");
   if (!helperSheet || !stagingSheet)
     throw new Error("Helper or Staging sheet not found!");
 
+  // ioOptions is Phase 4 only. refreshAllScripts and menu item 3 omit it.
+  // destSheetName           — write here instead of Staging
+  // helperRowNumbers        — 1-based Helper rows to run (subset). Omit = all rows
+  // muteSuccessAlert        — skip the “Block logic V3 updated” dialog
+  const opts = ioOptions && typeof ioOptions === "object" ? ioOptions : {};
+  const destName = String(opts.destSheetName || "Staging").trim() || "Staging";
+  const isPreviewDest = destName !== "Staging";
+  let destSheet = stagingSheet;
+  if (isPreviewDest) {
+    destSheet = ss.getSheetByName(destName);
+    if (!destSheet) destSheet = ss.insertSheet(destName);
+  }
+
   // ── Staging Issues CTX ─────────────────────────────────────────────────────
   const ctx = stagingIssuesStart("populateStagingWithBlockLogicV3");
   importIssuesSetMetric(ctx, "SourceSheet", "Helper");
-  importIssuesSetMetric(ctx, "DestSheet", "Staging");
-  // ───────────────────────────────────────────────────────────────────────────
+  importIssuesSetMetric(ctx, "DestSheet", destName);
+  // ─────────────────────────────────────────────────────────────────────────── ───────────────────────────────────────────────────────────────────────────
 
   const STRATEGY_ABBREV = {
     "SHORT IC": "SIC",
@@ -534,13 +547,27 @@ function populateStagingWithBlockLogicV3(seedBlocks) {
       return;
     }
 
-    const colMap = {};
+        const colMap = {};
     helperData[0].forEach((h, i) => {
       if (typeof h === "string" && h.trim())
         colMap[h.trim().toLowerCase()] = i + 1;
     });
 
     let data = helperData.slice(3).map((row) => row.slice());
+
+    // Phase 4 subset: run only the listed Helper rows (row 4 = first data row).
+    // Empty list → 0 data rows, headers still written. Full rebuild omits this.
+    if (Object.prototype.hasOwnProperty.call(opts, "helperRowNumbers")) {
+      const wanted = opts.helperRowNumbers || [];
+      const subset = [];
+      for (let k = 0; k < wanted.length; k++) {
+        const hr = Number(wanted[k]);
+        if (hr >= 4 && hr <= helperData.length) {
+          subset.push(helperData[hr - 1].slice());
+        }
+      }
+      data = subset;
+    }
 
     const dataStartRow = 4;
     const tz = ss.getSpreadsheetTimeZone();
@@ -1778,14 +1805,17 @@ function populateStagingWithBlockLogicV3(seedBlocks) {
       );
     }
 
-    const outputGrid = [helperData[0], helperData[1], helperData[2], ...data];
-    stagingSheet.clearContents();
-    stagingSheet
+      const outputGrid = [helperData[0], helperData[1], helperData[2], ...data];
+    destSheet.clearContents();
+    destSheet
       .getRange(1, 1, outputGrid.length, outputGrid[0].length)
       .setValues(outputGrid);
-    pipelineTimingLog("populateStagingWithBlockLogicV3 write Staging", tBlock);
+    pipelineTimingLog(
+      "populateStagingWithBlockLogicV3 write " + destName,
+      tBlock,
+    );
 
-    // Display pad: Sheets default can show 16:5. Force 16:05 on Staging.
+    // Display pad: Sheets default can show 16:5. Force 16:05 on data rows.
     if (outputGrid.length >= 4) {
       const stHeaders = outputGrid[0].map((h) =>
         (h || "").toString().trim().toLowerCase(),
@@ -1794,31 +1824,37 @@ function populateStagingWithBlockLogicV3(seedBlocks) {
       const stTm = stHeaders.indexOf("trade time") + 1;
       const nData = outputGrid.length - 3;
       if (stTs > 0) {
-        stagingSheet
+        destSheet
           .getRange(4, stTs, nData, 1)
           .setNumberFormat("M/d/yyyy HH:mm");
       }
       if (stTm > 0) {
-        stagingSheet.getRange(4, stTm, nData, 1).setNumberFormat("HH:mm");
+        destSheet.getRange(4, stTm, nData, 1).setNumberFormat("HH:mm");
       }
     }
 
-    checkMissingDateTimeAndAlert(
-      stagingSheet,
-      4,
-      "populateStagingWithBlockLogicV3",
-    );
+    if (!isPreviewDest) {
+      checkMissingDateTimeAndAlert(
+        destSheet,
+        4,
+        "populateStagingWithBlockLogicV3",
+      );
+    }
 
-    uiAlertSafe(
-      "✅ Block logic V3 updated! Trade Group ID increments once per open-to-flat block — " +
-        "RAD expirations close perfectly.",
-    );
+    if (!opts.muteSuccessAlert && !isPreviewDest) {
+      uiAlertSafe(
+        "✅ Block logic V3 updated! Trade Group ID increments once per open-to-flat block — " +
+          "RAD expirations close perfectly.",
+      );
+    }
   } catch (e) {
     importIssuesSetMetric(ctx, "Success", "0");
     importIssuesSetMetric(ctx, "ErrorMessage", e.message);
     importIssuesSetMetric(ctx, "ErrorStack", (e.stack || "").substring(0, 500));
     throw e;
   } finally {
-    stagingIssuesFlush(ctx);
+    // Preview dest must not add a Staging Issues run. Seeded live
+    // blocks would look like OpenPositionsAtEnd INFO noise.
+    if (!isPreviewDest) stagingIssuesFlush(ctx);
   }
 }
