@@ -5,6 +5,10 @@ function onOpen() {
   const incrementalMenu = ui
     .createMenu("Incremental (weekly / monthly)")
     .addItem(
+      "Preview incremental Combined merge (no Combined write)",
+      "previewIncrementalCombinedMergeBothAccounts",
+    )
+    .addItem(
       "Inspect incremental delta (Helper vs Master)",
       "inspectIncrementalDeltaFromMaster",
     )

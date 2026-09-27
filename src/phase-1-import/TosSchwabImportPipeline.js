@@ -1180,13 +1180,17 @@ function tosTradesWriteCombinedFromParsed(
     );
   }
 
+  if (options.buildOnly === true) {
+    return newOut;
+  }
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = tosGetOrCreateSheet(ss, tosConfig.tradesCombinedSheetName);
   const finalOut = options.replaceEntireSheet
     ? newOut
     : tosMergeAccountLabeledCombined(sh, newOut, Account);
 
-   // Write first, then trim leftovers (same pattern as Push).
+  // Write first, then trim leftovers (same pattern as Push).
   // clearContents() emptied the whole Combined tab before setValues.
   const prevLastRow = Math.max(sh.getLastRow(), 1);
   const prevLastCol = Math.max(sh.getLastColumn(), 1);
@@ -1198,11 +1202,21 @@ function tosTradesWriteCombinedFromParsed(
   sh.getRange(1, 1, outRows, outCols).setValues(finalOut);
 
   if (prevLastRow > outRows) {
-    sh.getRange(outRows + 1, 1, prevLastRow - outRows, prevLastCol).clearContent();
+    sh.getRange(
+      outRows + 1,
+      1,
+      prevLastRow - outRows,
+      prevLastCol,
+    ).clearContent();
   }
   if (prevLastCol > outCols) {
     const rowsToClear = Math.max(prevLastRow, outRows);
-    sh.getRange(1, outCols + 1, rowsToClear, prevLastCol - outCols).clearContent();
+    sh.getRange(
+      1,
+      outCols + 1,
+      rowsToClear,
+      prevLastCol - outCols,
+    ).clearContent();
   }
 
   // Sheet sort is only needed after merge-by-account (other account rows
@@ -1406,6 +1420,10 @@ function tosTopWriteCombinedFromParsed(
     newOut.push([obj.Account, obj.sourceFile, ...obj.row, obj.timeRaw ?? ""]);
   }
 
+  if (options.buildOnly === true) {
+    return newOut;
+  }
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = tosGetOrCreateSheet(ss, tosConfig.topCombinedSheetName);
   const finalOut = options.replaceEntireSheet
@@ -1458,15 +1476,31 @@ function tosTopWriteCombinedFromParsed(
   const outRows = finalOut.length;
   const outCols = finalOut[0].length;
 
-  tosFormatHeaderColumnsAsText(sh, finalOut[0], ["TIME", "TimeRaw"], outRows, 1);
+  tosFormatHeaderColumnsAsText(
+    sh,
+    finalOut[0],
+    ["TIME", "TimeRaw"],
+    outRows,
+    1,
+  );
   sh.getRange(1, 1, outRows, outCols).setValues(finalOut);
 
   if (prevLastRow > outRows) {
-    sh.getRange(outRows + 1, 1, prevLastRow - outRows, prevLastCol).clearContent();
+    sh.getRange(
+      outRows + 1,
+      1,
+      prevLastRow - outRows,
+      prevLastCol,
+    ).clearContent();
   }
   if (prevLastCol > outCols) {
     const rowsToClear = Math.max(prevLastRow, outRows);
-    sh.getRange(1, outCols + 1, rowsToClear, prevLastCol - outCols).clearContent();
+    sh.getRange(
+      1,
+      outCols + 1,
+      rowsToClear,
+      prevLastCol - outCols,
+    ).clearContent();
   }
 
   ctx.metrics.RowsWrittenExclHeader = finalOut.length - 1;
