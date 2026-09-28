@@ -425,6 +425,9 @@ function tosImportBothSectionsFromFolderBothAccounts() {
 function tosImportBothSectionsFromFolder(folderIdPropKey, Account, options) {
   options = options || {};
   const skipWrite = options.skipWrite === true;
+  // Incremental Combined only. Full Combined Both never passes this.
+  // Keys are exact Drive file names already on Combined (yearlies).
+  const skipSourceFileNames = options.skipSourceFileNames || null;
   const tStep = pipelineTimingNow();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -471,18 +474,31 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account, options) {
     );
 
     const tList = pipelineTimingNow();
-    const csvFiles = tosListCsvFilesInFolder(folder, tradesCtx);
+    const csvFilesAll = tosListCsvFilesInFolder(folder, tradesCtx);
     pipelineTimingLog(
       "tosImportBothSectionsFromFolder list",
       tList,
       "Account=" +
         (Account || "") +
         " files=" +
-        (csvFiles ? csvFiles.length : 0),
+        (csvFilesAll ? csvFilesAll.length : 0),
     );
-    if (!csvFiles) return;
+    if (!csvFilesAll) return;
 
-    importIssuesSetMetric(topCtx, "FilesFound", csvFiles.length);
+    const csvFiles = [];
+    let filesSkipped = 0;
+    for (let i = 0; i < csvFilesAll.length; i++) {
+      const fileName = String(csvFilesAll[i].getName() || "").trim();
+      if (skipSourceFileNames && skipSourceFileNames[fileName]) {
+        filesSkipped++;
+        continue;
+      }
+      csvFiles.push(csvFilesAll[i]);
+    }
+
+    importIssuesSetMetric(topCtx, "FilesFound", csvFilesAll.length);
+    importIssuesSetMetric(topCtx, "FilesSkipped", filesSkipped);
+    importIssuesSetMetric(topCtx, "FilesParsed", csvFiles.length);
     importIssuesSetMetric(
       topCtx,
       "FirstCsvFile",
@@ -546,6 +562,8 @@ function tosImportBothSectionsFromFolder(folderIdPropKey, Account, options) {
         folderIdPropKey: folderIdPropKey || "",
         folderName: folderName || "",
         fileCount: csvFiles.length,
+        filesFound: csvFilesAll.length,
+        filesSkipped: filesSkipped,
         tradesAllRows: tradesAllRows,
         tradesHeader: tradesHeader,
         topRowsAll: topRowsAll,

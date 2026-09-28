@@ -20,17 +20,20 @@ function previewIncrementalCombinedMergeBothAccounts() {
   const tradesLastBefore = tradesCombined ? tradesCombined.getLastRow() : "";
   const topLastBefore = topCombined ? topCombined.getLastRow() : "";
 
+  const skipSourceFileNames = tosYearlySourceFilesToSkip_(
+    tradesCombined,
+    topCombined,
+  );
   const dt = tosImportBothSectionsFromFolder(
     tosGetAccountFolderIdPropKey("DT"),
     "DT",
-    { skipWrite: true },
+    { skipWrite: true, skipSourceFileNames: skipSourceFileNames },
   );
   const lt = tosImportBothSectionsFromFolder(
     tosGetAccountFolderIdPropKey("LT"),
     "LT",
-    { skipWrite: true },
+    { skipWrite: true, skipSourceFileNames: skipSourceFileNames },
   );
-
   const tradesHeader =
     (dt && dt.tradesHeader) || (lt && lt.tradesHeader) || null;
   const topHeader = (dt && dt.topHeader) || (lt && lt.topHeader) || null;
@@ -40,8 +43,8 @@ function previewIncrementalCombinedMergeBothAccounts() {
   const topRowsAll = []
     .concat((dt && dt.topRowsAll) || [])
     .concat((lt && lt.topRowsAll) || []);
-  const fileCount =
-    Number((dt && dt.fileCount) || 0) + Number((lt && lt.fileCount) || 0);
+  const fileCounts = tosSumImportFileCounts_(dt, lt);
+  const fileCount = fileCounts.parsed;
 
   const tradesCtx = importIssuesStart("previewIncrementalCombinedMerge:Trades");
   const topCtx = importIssuesStart("previewIncrementalCombinedMerge:Top");
@@ -121,8 +124,14 @@ function previewIncrementalCombinedMergeBothAccounts() {
 
   uiAlertSafe(
     "Incremental Combined preview OK (read-only).\n\n" +
+      "Drive CSV files found: " +
+      fileCounts.found +
+      "\n" +
       "Drive CSV files parsed: " +
       fileCount +
+      "\n" +
+      "Yearlies skipped (already on Combined): " +
+      fileCounts.skipped +
       "\n" +
       fileNote +
       "\n" +
@@ -452,15 +461,19 @@ function mergeIncrementalCombinedNewRowsBothAccounts() {
   const tradesLastBefore = tradesCombined ? tradesCombined.getLastRow() : "";
   const topLastBefore = topCombined ? topCombined.getLastRow() : "";
 
+  const skipSourceFileNames = tosYearlySourceFilesToSkip_(
+    tradesCombined,
+    topCombined,
+  );
   const dt = tosImportBothSectionsFromFolder(
     tosGetAccountFolderIdPropKey("DT"),
     "DT",
-    { skipWrite: true },
+    { skipWrite: true, skipSourceFileNames: skipSourceFileNames },
   );
   const lt = tosImportBothSectionsFromFolder(
     tosGetAccountFolderIdPropKey("LT"),
     "LT",
-    { skipWrite: true },
+    { skipWrite: true, skipSourceFileNames: skipSourceFileNames },
   );
 
   const tradesHeader =
@@ -472,8 +485,8 @@ function mergeIncrementalCombinedNewRowsBothAccounts() {
   const topRowsAll = []
     .concat((dt && dt.topRowsAll) || [])
     .concat((lt && lt.topRowsAll) || []);
-  const fileCount =
-    Number((dt && dt.fileCount) || 0) + Number((lt && lt.fileCount) || 0);
+  const fileCounts = tosSumImportFileCounts_(dt, lt);
+  const fileCount = fileCounts.parsed;
 
   const tradesCtx = importIssuesStart("mergeIncrementalCombined:Trades");
   const topCtx = importIssuesStart("mergeIncrementalCombined:Top");
@@ -522,8 +535,14 @@ function mergeIncrementalCombinedNewRowsBothAccounts() {
     );
     uiAlertSafe(
       "Incremental Combined merge skipped — no new rows.\n\n" +
+        "Drive CSV files found: " +
+        fileCounts.found +
+        "\n" +
         "Drive CSV files parsed: " +
         fileCount +
+        "\n" +
+        "Yearlies skipped (already on Combined): " +
+        fileCounts.skipped +
         "\n" +
         "TOS Trades - Combined last row before/after: " +
         tradesLastBefore +
@@ -690,6 +709,51 @@ function tosIsIncrementalSourceFile_(name) {
   return /incremental\.csv$/i.test(String(name || "").trim());
 }
 
+/**
+ * Distinct SourceFile names already stored on a Combined sheet.
+ */
+function tosCollectSheetSourceFileNames_(sh) {
+  const names = {};
+  if (!sh || sh.getLastRow() < 2) return names;
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  const idx = headers.indexOf("SourceFile");
+  if (idx < 0) return names;
+  const vals = sh.getRange(2, idx + 1, sh.getLastRow() - 1, 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    const n = String(vals[i][0] || "").trim();
+    if (n) names[n] = true;
+  }
+  return names;
+}
+
+/**
+ * Yearlies already on BOTH Combined sheets. Incremental.csv is never skipped.
+ */
+function tosYearlySourceFilesToSkip_(tradesCombined, topCombined) {
+  const tradesNames = tosCollectSheetSourceFileNames_(tradesCombined);
+  const topNames = tosCollectSheetSourceFileNames_(topCombined);
+  const skip = {};
+  const keys = Object.keys(tradesNames);
+  for (let i = 0; i < keys.length; i++) {
+    const n = keys[i];
+    if (topNames[n] && !tosIsIncrementalSourceFile_(n)) skip[n] = true;
+  }
+  return skip;
+}
+
+function tosSumImportFileCounts_(dt, lt) {
+  return {
+    parsed:
+      Number((dt && dt.fileCount) || 0) + Number((lt && lt.fileCount) || 0),
+    found:
+      Number((dt && dt.filesFound) || (dt && dt.fileCount) || 0) +
+      Number((lt && lt.filesFound) || (lt && lt.fileCount) || 0),
+    skipped:
+      Number((dt && dt.filesSkipped) || 0) +
+      Number((lt && lt.filesSkipped) || 0),
+  };
+}
+
 function tosCombinedHeaderIndex_(headers, name) {
   const j = headers.indexOf(name);
   if (j === -1) throw new Error("Missing Combined header: " + name);
@@ -704,7 +768,8 @@ function tosCombinedHeaderIndex_(headers, name) {
 function tosBuildIncrementalTradesPushRows_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const src = ss.getSheetByName(tosConfig.tradesCombinedSheetName);
-  if (!src) throw new Error("Missing sheet: " + tosConfig.tradesCombinedSheetName);
+  if (!src)
+    throw new Error("Missing sheet: " + tosConfig.tradesCombinedSheetName);
 
   const displays = src.getDataRange().getDisplayValues();
   if (!displays || displays.length < 2) {
@@ -745,7 +810,9 @@ function tosBuildIncrementalTradesPushRows_() {
 
   for (let r = 1; r < displays.length; r++) {
     const row = displays[r];
-    const sourceFile = String(row[idxSource] == null ? "" : row[idxSource]).trim();
+    const sourceFile = String(
+      row[idxSource] == null ? "" : row[idxSource],
+    ).trim();
     if (!tosIsIncrementalSourceFile_(sourceFile)) continue;
     sourceFileNames[sourceFile] = true;
 
@@ -784,7 +851,8 @@ function tosBuildIncrementalTradesPushRows_() {
       return row[idx[h]];
     });
     const symJ = wanted.indexOf("Symbol");
-    if (symJ >= 0) outRow[symJ] = String(outRow[symJ] == null ? "" : outRow[symJ]).trim();
+    if (symJ >= 0)
+      outRow[symJ] = String(outRow[symJ] == null ? "" : outRow[symJ]).trim();
     out.push(outRow);
 
     const day = execOut.substring(0, 10);
@@ -859,7 +927,9 @@ function tosBuildIncrementalTopPushRows_() {
 
   for (let r = 1; r < values.length; r++) {
     const row = values[r];
-    const sourceFile = String(row[idx.SourceFile] == null ? "" : row[idx.SourceFile]).trim();
+    const sourceFile = String(
+      row[idx.SourceFile] == null ? "" : row[idx.SourceFile],
+    ).trim();
     if (!tosIsIncrementalSourceFile_(sourceFile)) continue;
     sourceFileNames[sourceFile] = true;
 
@@ -871,7 +941,8 @@ function tosBuildIncrementalTopPushRows_() {
     const timeRaw = String(row[idx.time] == null ? "" : row[idx.time]).trim();
     const timeHHmmss = normalizeTimeHHmmss(timeRaw);
     const dateVal = row[idx.date];
-    const dateKey = tosTopNormalizeDateToIso(dateVal) || String(dateVal || "").trim();
+    const dateKey =
+      tosTopNormalizeDateToIso(dateVal) || String(dateVal || "").trim();
 
     const hasAny =
       String(dateVal == null ? "" : dateVal).trim() ||
@@ -912,7 +983,12 @@ function tosWriteIncrementalPushPreview_(ss, sheetName, out) {
   return sh;
 }
 
-function tosReplaceWorkingSheetFromPushGrid_(dst, out, textHeaders, execTimeFormat) {
+function tosReplaceWorkingSheetFromPushGrid_(
+  dst,
+  out,
+  textHeaders,
+  execTimeFormat,
+) {
   if (!dst || !out || out.length < 1) return;
   const prevLastRow = Math.max(dst.getLastRow(), 1);
   const prevLastCol = Math.max(dst.getLastColumn(), 1);
@@ -939,7 +1015,9 @@ function tosReplaceWorkingSheetFromPushGrid_(dst, out, textHeaders, execTimeForm
   }
 
   if (execTimeFormat && outRows > 2) {
-    dst.getRange(2, 1, outRows - 1, outCols).sort({ column: 2, ascending: true });
+    dst
+      .getRange(2, 1, outRows - 1, outCols)
+      .sort({ column: 2, ascending: true });
   }
 }
 
@@ -961,7 +1039,11 @@ function previewIncrementalPushFromCombined() {
     "Incremental TosTrades Preview",
     tradesPack.out,
   );
-  tosWriteIncrementalPushPreview_(ss, "Incremental TosTop Preview", topPack.out);
+  tosWriteIncrementalPushPreview_(
+    ss,
+    "Incremental TosTop Preview",
+    topPack.out,
+  );
 
   pipelineTimingLog(
     "previewIncrementalPushFromCombined",
@@ -1012,7 +1094,8 @@ function pushIncrementalCombinedToWorkingSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const dstTrades = ss.getSheetByName(tosConfig.tosTradesSheetName);
   const dstTop = ss.getSheetByName(tosConfig.tosTopSheetName);
-  if (!dstTrades) throw new Error("Missing sheet: " + tosConfig.tosTradesSheetName);
+  if (!dstTrades)
+    throw new Error("Missing sheet: " + tosConfig.tosTradesSheetName);
   if (!dstTop) throw new Error("Missing sheet: " + tosConfig.tosTopSheetName);
 
   const tradesBefore = dstTrades.getLastRow();
@@ -1093,4 +1176,55 @@ function pushIncrementalCombinedToWorkingSheets() {
       "Combined last rows unchanged.\n" +
       "Did not call pushTosCombinedToBoth.",
   );
+}
+
+/**
+ * Read-only. Lists each Drive CSV and why Incremental Combined
+ * PARSEs or SKIPs it. Does not write Combined.
+ */
+function debugListIncrementalFileSkip() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tradesCombined = ss.getSheetByName(tosConfig.tradesCombinedSheetName);
+  const topCombined = ss.getSheetByName(tosConfig.topCombinedSheetName);
+  const tradesNames = tosCollectSheetSourceFileNames_(tradesCombined);
+  const topNames = tosCollectSheetSourceFileNames_(topCombined);
+  const skip = tosYearlySourceFilesToSkip_(tradesCombined, topCombined);
+
+  const lines = [];
+  function walk(account) {
+    const resolved = tosResolveAccountCsvFolder(
+      tosGetAccountFolderIdPropKey(account),
+      account,
+      importIssuesStart("debugListIncrementalFileSkip:" + account),
+    );
+    if (!resolved) {
+      lines.push(account + ": folder not resolved");
+      return;
+    }
+    const files = tosListCsvFilesInFolder(
+      resolved.folder,
+      importIssuesStart("debugListIncrementalFileSkipList:" + account),
+    );
+    lines.push(
+      "--- " + account + " Drive files: " + (files ? files.length : 0) + " ---",
+    );
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) {
+      const n = String(files[i].getName() || "").trim();
+      const onTrades = tradesNames[n] ? "Y" : "N";
+      const onTop = topNames[n] ? "Y" : "N";
+      let why;
+      if (tosIsIncrementalSourceFile_(n)) why = "PARSE Incremental.csv";
+      else if (skip[n]) why = "SKIP on both Combined";
+      else if (onTrades === "N" && onTop === "N") why = "PARSE name not on Combined";
+      else if (onTrades === "N") why = "PARSE missing from Trades Combined";
+      else if (onTop === "N") why = "PARSE missing from Top Combined";
+      else why = "PARSE unexpected";
+      lines.push(n);
+      lines.push("  trades=" + onTrades + " top=" + onTop + " " + why);
+    }
+  }
+  walk("DT");
+  walk("LT");
+  uiAlertSafe(lines.join("\n"));
 }
