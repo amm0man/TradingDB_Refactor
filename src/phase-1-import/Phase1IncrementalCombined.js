@@ -685,3 +685,412 @@ function tosAppendCombinedNewRows_(sheet, header, newRows, kind) {
     sheet.getRange(firstEmpty, 1, out.length, writeCols).setValues(out);
   }
 }
+
+function tosIsIncrementalSourceFile_(name) {
+  return /incremental\.csv$/i.test(String(name || "").trim());
+}
+
+function tosCombinedHeaderIndex_(headers, name) {
+  const j = headers.indexOf(name);
+  if (j === -1) throw new Error("Missing Combined header: " + name);
+  return j;
+}
+
+/**
+ * Combined rows whose SourceFile ends with Incremental.csv,
+ * mapped to the working TosTrades Push columns.
+ * Uses getDisplayValues so Exec Time / Exp stay text (chimera fix).
+ */
+function tosBuildIncrementalTradesPushRows_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const src = ss.getSheetByName(tosConfig.tradesCombinedSheetName);
+  if (!src) throw new Error("Missing sheet: " + tosConfig.tradesCombinedSheetName);
+
+  const displays = src.getDataRange().getDisplayValues();
+  if (!displays || displays.length < 2) {
+    return { out: null, sourceFileNames: [], firstDate: "", lastDate: "" };
+  }
+
+  const headers = displays[0].map(function (h) {
+    return String(h == null ? "" : h).trim();
+  });
+  const idxAccount = tosCombinedHeaderIndex_(headers, "Account");
+  const idxSource = tosCombinedHeaderIndex_(headers, "SourceFile");
+  const wanted = [
+    "Account",
+    "Exec Time",
+    "Spread",
+    "Side",
+    "Qty",
+    "Pos Effect",
+    "Symbol",
+    "Exp",
+    "Strike",
+    "Type",
+    "Price",
+    "Net Price",
+    "Order Type",
+  ];
+  const idx = { Account: idxAccount };
+  for (let i = 0; i < wanted.length; i++) {
+    if (wanted[i] !== "Account") {
+      idx[wanted[i]] = tosCombinedHeaderIndex_(headers, wanted[i]);
+    }
+  }
+
+  const out = [wanted];
+  const sourceFileNames = {};
+  let firstDate = "";
+  let lastDate = "";
+
+  for (let r = 1; r < displays.length; r++) {
+    const row = displays[r];
+    const sourceFile = String(row[idxSource] == null ? "" : row[idxSource]).trim();
+    if (!tosIsIncrementalSourceFile_(sourceFile)) continue;
+    sourceFileNames[sourceFile] = true;
+
+    const hasAny = wanted.some(function (h) {
+      return String(row[idx[h]] == null ? "" : row[idx[h]]).trim() !== "";
+    });
+    if (!hasAny) continue;
+
+    const execDisplay = String(row[idx["Exec Time"]] || "").trim();
+    const expDisplay = String(row[idx["Exp"]] || "").trim();
+    let execOut = "";
+    const mIso = execDisplay.match(
+      /^(\d{4})-(\d{2})-(\d{2})[\s\t]+(\d{2}):(\d{2})(?::(\d{2}))?/,
+    );
+    if (mIso) {
+      execOut =
+        mIso[1] +
+        "-" +
+        mIso[2] +
+        "-" +
+        mIso[3] +
+        " " +
+        mIso[4] +
+        ":" +
+        mIso[5] +
+        ":" +
+        (mIso[6] || "00");
+    } else if (execDisplay) {
+      execOut = execDisplay;
+    }
+    if (!execOut) continue;
+
+    const outRow = wanted.map(function (h) {
+      if (h === "Exec Time") return execOut;
+      if (h === "Exp") return expDisplay;
+      return row[idx[h]];
+    });
+    const symJ = wanted.indexOf("Symbol");
+    if (symJ >= 0) outRow[symJ] = String(outRow[symJ] == null ? "" : outRow[symJ]).trim();
+    out.push(outRow);
+
+    const day = execOut.substring(0, 10);
+    if (!firstDate || day < firstDate) firstDate = day;
+    if (!lastDate || day > lastDate) lastDate = day;
+  }
+
+  return {
+    out: out,
+    sourceFileNames: Object.keys(sourceFileNames),
+    firstDate: firstDate,
+    lastDate: lastDate,
+  };
+}
+
+/**
+ * Combined rows whose SourceFile ends with Incremental.csv,
+ * mapped to the working TosTop Push columns.
+ */
+function tosBuildIncrementalTopPushRows_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const src = ss.getSheetByName(tosConfig.topCombinedSheetName);
+  if (!src) throw new Error("Missing sheet: " + tosConfig.topCombinedSheetName);
+
+  const values = src.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    return { out: null, sourceFileNames: [], firstDate: "", lastDate: "" };
+  }
+
+  const headers = values[0].map(function (h) {
+    return String(h == null ? "" : h).trim();
+  });
+  function headerIndex(nameOrNames) {
+    const names = Array.isArray(nameOrNames) ? nameOrNames : [nameOrNames];
+    for (let i = 0; i < names.length; i++) {
+      const j = headers.indexOf(names[i]);
+      if (j !== -1) return j;
+    }
+    throw new Error("Missing Combined Top header. Tried: " + names.join(" | "));
+  }
+
+  const idx = {
+    Account: headerIndex("Account"),
+    SourceFile: headerIndex("SourceFile"),
+    date: headerIndex("DATE"),
+    time: headerIndex("TIME"),
+    type: headerIndex("TYPE"),
+    desc: headerIndex("DESCRIPTION"),
+    miscFees: headerIndex("Misc Fees"),
+    commFees: headerIndex([
+      "Commissions & Fees",
+      "Commissions Fees",
+      "Commissions and Fees",
+    ]),
+    amount: headerIndex("AMOUNT"),
+  };
+
+  const outHeaders = [
+    "Account",
+    "DATE",
+    "TIME",
+    "TYPE",
+    "DESCRIPTION",
+    "Misc Fees",
+    "Commissions Fees",
+    "AMOUNT",
+  ];
+  const out = [outHeaders];
+  const sourceFileNames = {};
+  let firstDate = "";
+  let lastDate = "";
+
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const sourceFile = String(row[idx.SourceFile] == null ? "" : row[idx.SourceFile]).trim();
+    if (!tosIsIncrementalSourceFile_(sourceFile)) continue;
+    sourceFileNames[sourceFile] = true;
+
+    const descUpper = String(row[idx.desc] == null ? "" : row[idx.desc])
+      .trim()
+      .toUpperCase();
+    if (descUpper === "TOTAL") continue;
+
+    const timeRaw = String(row[idx.time] == null ? "" : row[idx.time]).trim();
+    const timeHHmmss = normalizeTimeHHmmss(timeRaw);
+    const dateVal = row[idx.date];
+    const dateKey = tosTopNormalizeDateToIso(dateVal) || String(dateVal || "").trim();
+
+    const hasAny =
+      String(dateVal == null ? "" : dateVal).trim() ||
+      String(timeHHmmss || "").trim() ||
+      String(row[idx.type] == null ? "" : row[idx.type]).trim() ||
+      String(row[idx.desc] == null ? "" : row[idx.desc]).trim();
+    if (!hasAny) continue;
+
+    out.push([
+      row[idx.Account],
+      dateVal,
+      timeHHmmss,
+      row[idx.type],
+      row[idx.desc],
+      row[idx.miscFees],
+      row[idx.commFees],
+      row[idx.amount],
+    ]);
+    if (dateKey) {
+      if (!firstDate || dateKey < firstDate) firstDate = dateKey;
+      if (!lastDate || dateKey > lastDate) lastDate = dateKey;
+    }
+  }
+
+  return {
+    out: out,
+    sourceFileNames: Object.keys(sourceFileNames),
+    firstDate: firstDate,
+    lastDate: lastDate,
+  };
+}
+
+function tosWriteIncrementalPushPreview_(ss, sheetName, out) {
+  const sh = tosGetOrCreateSheet(ss, sheetName);
+  sh.clear();
+  if (!out || !out.length) return sh;
+  sh.getRange(1, 1, out.length, out[0].length).setValues(out);
+  return sh;
+}
+
+function tosReplaceWorkingSheetFromPushGrid_(dst, out, textHeaders, execTimeFormat) {
+  if (!dst || !out || out.length < 1) return;
+  const prevLastRow = Math.max(dst.getLastRow(), 1);
+  const prevLastCol = Math.max(dst.getLastColumn(), 1);
+  const outRows = out.length;
+  const outCols = out[0].length;
+
+  tosFormatHeaderColumnsAsText(dst, out[0], textHeaders, outRows, 1);
+  dst.getRange(1, 1, outRows, outCols).setValues(out);
+
+  if (execTimeFormat && outRows > 1) {
+    dst.getRange(2, 2, outRows - 1, 1).setNumberFormat(execTimeFormat);
+  }
+
+  if (prevLastRow > outRows) {
+    dst
+      .getRange(outRows + 1, 1, prevLastRow - outRows, prevLastCol)
+      .clearContent();
+  }
+  if (prevLastCol > outCols) {
+    const rowsToClear = Math.max(prevLastRow, outRows);
+    dst
+      .getRange(1, outCols + 1, rowsToClear, prevLastCol - outCols)
+      .clearContent();
+  }
+
+  if (execTimeFormat && outRows > 2) {
+    dst.getRange(2, 1, outRows - 1, outCols).sort({ column: 2, ascending: true });
+  }
+}
+
+function previewIncrementalPushFromCombined() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tradesBefore = ss.getSheetByName(tosConfig.tosTradesSheetName);
+  const topBefore = ss.getSheetByName(tosConfig.tosTopSheetName);
+  const tradesLast = tradesBefore ? tradesBefore.getLastRow() : "";
+  const topLast = topBefore ? topBefore.getLastRow() : "";
+
+  const tradesPack = tosBuildIncrementalTradesPushRows_();
+  const topPack = tosBuildIncrementalTopPushRows_();
+  const tradesRows = tradesPack.out ? tradesPack.out.length - 1 : 0;
+  const topRows = topPack.out ? topPack.out.length - 1 : 0;
+
+  tosWriteIncrementalPushPreview_(
+    ss,
+    "Incremental TosTrades Preview",
+    tradesPack.out,
+  );
+  tosWriteIncrementalPushPreview_(ss, "Incremental TosTop Preview", topPack.out);
+
+  pipelineTimingLog(
+    "previewIncrementalPushFromCombined",
+    t0,
+    "trades=" + tradesRows + " top=" + topRows,
+  );
+
+  uiAlertSafe(
+    "Incremental Push preview OK (working sheets not written).\n\n" +
+      "SourceFile filter: name ends with Incremental.csv\n" +
+      "Trades files: " +
+      (tradesPack.sourceFileNames.join(", ") || "none") +
+      "\n" +
+      "  rows: " +
+      tradesRows +
+      "\n" +
+      "  dates: " +
+      tradesPack.firstDate +
+      " → " +
+      tradesPack.lastDate +
+      "\n" +
+      "Top files: " +
+      (topPack.sourceFileNames.join(", ") || "none") +
+      "\n" +
+      "  rows: " +
+      topRows +
+      "\n" +
+      "  dates: " +
+      topPack.firstDate +
+      " → " +
+      topPack.lastDate +
+      "\n\n" +
+      "Working TosTrades last row still: " +
+      tradesLast +
+      "\n" +
+      "Working TosTop last row still: " +
+      topLast +
+      "\n" +
+      "Combined last rows unchanged (14525 / 15026 tonight).\n" +
+      "Preview sheets: Incremental TosTrades Preview / Incremental TosTop Preview.\n\n" +
+      "Tonight expect Trades 97 and Top 114.",
+  );
+}
+
+function pushIncrementalCombinedToWorkingSheets() {
+  const t0 = pipelineTimingNow();
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dstTrades = ss.getSheetByName(tosConfig.tosTradesSheetName);
+  const dstTop = ss.getSheetByName(tosConfig.tosTopSheetName);
+  if (!dstTrades) throw new Error("Missing sheet: " + tosConfig.tosTradesSheetName);
+  if (!dstTop) throw new Error("Missing sheet: " + tosConfig.tosTopSheetName);
+
+  const tradesBefore = dstTrades.getLastRow();
+  const topBefore = dstTop.getLastRow();
+  const tradesPack = tosBuildIncrementalTradesPushRows_();
+  const topPack = tosBuildIncrementalTopPushRows_();
+  const tradesRows = tradesPack.out ? tradesPack.out.length - 1 : 0;
+  const topRows = topPack.out ? topPack.out.length - 1 : 0;
+
+  const resp = ui.alert(
+    "Replace working TosTrades / TosTop with Incremental slice?",
+    "Trades rows: " +
+      tradesRows +
+      "  (" +
+      tradesPack.firstDate +
+      " → " +
+      tradesPack.lastDate +
+      ")\n" +
+      "Top rows: " +
+      topRows +
+      "  (" +
+      topPack.firstDate +
+      " → " +
+      topPack.lastDate +
+      ")\n\n" +
+      "This REPLACES TosTrades and TosTop with those rows only.\n" +
+      "Combined is not written.\n" +
+      "Full history is still on Combined. Restore with Full rebuild → Push BOTH.\n\n" +
+      "Cancel if counts are not 97 / 114 tonight.",
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (resp !== ui.Button.OK) {
+    pipelineTimingLog(
+      "pushIncrementalCombinedToWorkingSheets",
+      t0,
+      "cancelled trades=" + tradesRows + " top=" + topRows,
+    );
+    return;
+  }
+
+  tosReplaceWorkingSheetFromPushGrid_(
+    dstTrades,
+    tradesPack.out,
+    ["Symbol", "Exec Time", "Exp"],
+    "yyyy-mm-dd hh:mm:ss",
+  );
+  tosReplaceWorkingSheetFromPushGrid_(dstTop, topPack.out, ["TIME"], "");
+
+  pipelineTimingLog(
+    "pushIncrementalCombinedToWorkingSheets",
+    t0,
+    "trades=" +
+      tradesRows +
+      " top=" +
+      topRows +
+      " tradesRow=" +
+      dstTrades.getLastRow() +
+      " topRow=" +
+      dstTop.getLastRow(),
+  );
+
+  uiAlertSafe(
+    "Incremental Push OK.\n\n" +
+      "TosTrades last row before/after: " +
+      tradesBefore +
+      " / " +
+      dstTrades.getLastRow() +
+      "  (wrote " +
+      tradesRows +
+      ")\n" +
+      "TosTop last row before/after: " +
+      topBefore +
+      " / " +
+      dstTop.getLastRow() +
+      "  (wrote " +
+      topRows +
+      ")\n\n" +
+      "Combined last rows unchanged.\n" +
+      "Did not call pushTosCombinedToBoth.",
+  );
+}

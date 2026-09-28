@@ -36,6 +36,15 @@ function onOpen() {
       "Merge incremental Combined (new rows only)",
       "mergeIncrementalCombinedNewRowsBothAccounts",
     )
+    .addItem(
+      "Preview incremental Push (preview sheets only)",
+      "previewIncrementalPushFromCombined",
+    )
+    .addItem(
+      "Push incremental Combined → TosTop / TosTrades (slice only)",
+      "pushIncrementalCombinedToWorkingSheets",
+    )
+
     .addSeparator()
     .addSeparator()
     .addItem(
