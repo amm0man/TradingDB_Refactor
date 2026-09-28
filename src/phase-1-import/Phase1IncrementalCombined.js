@@ -435,6 +435,7 @@ function tosDescribeCombinedSourceFiles_(dt, lt, tradesCombined, topCombined) {
   return (
     "SourceFile names in this parse: " +
     driveList.length +
+    (driveList.length ? "\n  " + driveList.join("\n  ") : "") +
     "\n" +
     "SourceFile names not yet on Combined: " +
     (onlyDrive.length ? onlyDrive.join(", ") : "none")
@@ -1216,7 +1217,8 @@ function debugListIncrementalFileSkip() {
       let why;
       if (tosIsIncrementalSourceFile_(n)) why = "PARSE Incremental.csv";
       else if (skip[n]) why = "SKIP on both Combined";
-      else if (onTrades === "N" && onTop === "N") why = "PARSE name not on Combined";
+      else if (onTrades === "N" && onTop === "N")
+        why = "PARSE name not on Combined";
       else if (onTrades === "N") why = "PARSE missing from Trades Combined";
       else if (onTop === "N") why = "PARSE missing from Top Combined";
       else why = "PARSE unexpected";
