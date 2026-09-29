@@ -166,12 +166,6 @@ function tosGetAccountFolderIdPropKey(Account) {
   return primary;
 }
 
-/**
- * Canonical account selector for this project:
- * - Reads SettingService.gs key: accountMode (DT/LT)
- * - Falls back to DT if missing
- */
-
 /** ---- Folder setup UI helpers ---- */
 
 /**
@@ -305,9 +299,6 @@ function tosRunFullTosToSchwabImportBothAccounts() {
     setSetting("ACTIVE_IMPORT_RUN_ID", "");
   }
 }
-
-// ----- Current account only -----
-// Uses the Account Mode setting (DT or LT) to decide which folder to read.
 
 function tosImportBothSectionsFromFolderBothAccounts() {
   const tBoth = pipelineTimingNow();

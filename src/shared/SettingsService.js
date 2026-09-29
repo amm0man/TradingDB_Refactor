@@ -5,8 +5,12 @@
  * using Google Apps Script's PropertiesService (ScriptProperties).
  *
  * Currently used for:
- *   - 'accountMode'          → 'DT' (Day Trading) or 'LT' (Long Term)
  *   - 'TOS_IMPORT_DEBUG_ALERTS' → '0' (off) or '1' (on) for import diagnostics
+ *   - folder IDs, Issues write-mode, ACTIVE_IMPORT_RUN_ID (set by other files)
+ *
+ * accountMode / TOS_ACCOUNT_MODE were removed 2026-09-29. The ScriptProperty
+ * may still appear in Show Current Settings until it is deleted by hand.
+ * Do not read it. Both accounts always run.
  *
  * All values are stored as strings. Use getSetting(key, defaultValue) when
  * you want a fallback if the setting has never been set.
