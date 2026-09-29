@@ -149,10 +149,7 @@ function onOpen() {
       "auditPipelineIntegrity",
     )
     .addSeparator()
-    .addItem(
-      "Push Staging → Master (Append ALL Staging — not incremental)",
-      "appendStagingToMaster",
-    )
+
     .addItem(
       "Replace Master from Staging (first load)",
       "replaceMasterFromStaging",
