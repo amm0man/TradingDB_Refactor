@@ -972,7 +972,6 @@ function previewIncrementalCandidatesFromHelper() {
       "Candidates (would enter incremental Step 4): " +
       candidates +
       "\n\n" +
-      "On the 9/1/2026 16:41:18 freeze this must be 0 / 1 / 0 / 0.\n" +
       "Open Incremental Candidates Preview.\n" +
       "Does not write Staging or Master.",
   );
@@ -1161,8 +1160,9 @@ function runIncrementalFromHelperDryRun() {
         "Candidates: " +
         collected.candidates +
         "\n\n" +
-        "This freeze should be 0. Do not write Staging or Master.\n" +
-        "Run Preview incremental candidates and paste that sheet.",
+        "Dry run only continues when Candidates is 0.\n" +
+        "Do not write Staging or Master.\n" +
+        "Run Preview incremental candidates and look at that sheet.",
     );
     return;
   }
@@ -1200,8 +1200,7 @@ function runIncrementalFromHelperDryRun() {
       live +
       "\n\n" +
       "No Helper / Staging / Master write.\n" +
-      "populateStagingWithBlockLogicV3 was not called.\n" +
-      "Expect seed keys 2514 and live 82 on this freeze.",
+      "populateStagingWithBlockLogicV3 was not called.",
   );
 }
 
@@ -1319,8 +1318,7 @@ function previewIncrementalSeededOutputFromHelper() {
       live +
       "\n\n" +
       "No Helper / Staging / Master write.\n" +
-      "populateStagingWithBlockLogicV3 was not called.\n" +
-      "Expect frozen 3, keys 2514, live 82.",
+      "populateStagingWithBlockLogicV3 was not called.",
   );
 }
 
@@ -1437,8 +1435,6 @@ function previewIncrementalStep4FromHelper() {
       " / " +
       masterLastAfter +
       "\n\n" +
-      "On this freeze expect candidates 0, keys 2514, live 82,\n" +
-      "Staging 15836 / 15836, Master 15834 / 15834.\n" +
       "Did not write Helper / Staging / Master data.",
   );
 }
@@ -1725,7 +1721,6 @@ function previewIncrementalStep4ReplayLastPrint() {
       "Did not write Helper / Staging / Master data.",
   );
 }
-
 
 /**
  * Latest Master timestamp on a calendar day before lastTs's date (sheet TZ).
@@ -2022,4 +2017,3 @@ function previewIncrementalStep4ReplayLastCalendarDay() {
       "Did not write Helper / Staging / Master data.",
   );
 }
-

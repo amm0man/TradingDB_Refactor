@@ -162,7 +162,7 @@ function previewIncrementalCombinedMergeBothAccounts() {
       tradesSample +
       "Combined last rows after must match before.\n" +
       "Preview sheets: Incremental Combined Trades Preview / Top Preview.\n\n" +
-      "On this freeze, with no new CSV, expect NEW 0 / 0.\n" +
+      "If those Incremental.csv files are already on Combined, expect NEW 0 / 0.\n" +
       "Did not write TOS Trades - Combined or TOS Top - Combined.",
   );
 }
@@ -450,7 +450,8 @@ function tosDescribeCombinedSourceFiles_(dt, lt, tradesCombined, topCombined) {
  * Does not call tosImportBothSectionsFromFolderBothAccounts
  * (that path still replaceEntireSheet: true).
  *
- * On this freeze NEW is 0 / 0, so this is a no-op.
+ * On this* When NEW is 0 this is a no-op (append is skipped).
+ * freeze NEW is 0 / 0, so this is a no-op.
  */
 function mergeIncrementalCombinedNewRowsBothAccounts() {
   const t0 = pipelineTimingNow();

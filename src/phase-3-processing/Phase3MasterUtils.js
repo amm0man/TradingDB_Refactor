@@ -182,7 +182,7 @@ function appendIncrementalPreviewToMaster() {
         " / " +
         stagingLastBefore +
         "\n\n" +
-        "On this freeze that is expected.\n" +
+        "Candidates 0 means Master already has these Helper rows.\n" +
         "Did not write Helper / Staging / Master.\n" +
         "Did not call appendStagingToMaster.",
     );
