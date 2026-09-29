@@ -275,7 +275,7 @@ function tosSampleTradesKeyDebug_(
   const pExp = pHeader.indexOf("Exp") >= 0 ? pRow[pHeader.indexOf("Exp")] : "";
 
   return (
-    "Trades key sample (row 2 vs parsed row 1):\n" +
+    "Trades key sample (Combined row 2 vs first parsed row):\n" +
     "  Combined Exec Time type/value: " +
     typeof cExecRaw +
     " / " +
@@ -298,7 +298,6 @@ function tosSampleTradesKeyDebug_(
     "  Parsed account: " +
     String(pAcct) +
     "\n" +
-    "  key strings equal: " +
     "  Combined Exp type/value: " +
     typeof cExp +
     " / " +
@@ -315,8 +314,11 @@ function tosSampleTradesKeyDebug_(
     "  Parsed Exp key: " +
     tosNormalizeExpKey_(pInner[canonicalHeader.indexOf("Exp")]) +
     "\n" +
+    "  key strings equal: " +
     (cKey === pKey) +
-    "\n\n"
+    "\n" +
+    "  (false is OK after file-skip: Combined row 2 is oldest history,\n" +
+    "   parsed row 1 is the first Incremental.csv row.)\n\n"
   );
 }
 
