@@ -20,9 +20,13 @@ function previewIncrementalCombinedMergeBothAccounts() {
   const tradesLastBefore = tradesCombined ? tradesCombined.getLastRow() : "";
   const topLastBefore = topCombined ? topCombined.getLastRow() : "";
 
+  const tradesNames = tosCollectSheetSourceFileNames_(tradesCombined);
+  const topNames = tosCollectSheetSourceFileNames_(topCombined);
   const skipSourceFileNames = tosYearlySourceFilesToSkip_(
     tradesCombined,
     topCombined,
+    tradesNames,
+    topNames,
   );
   const dt = tosImportBothSectionsFromFolder(
     tosGetAccountFolderIdPropKey("DT"),
@@ -103,6 +107,8 @@ function previewIncrementalCombinedMergeBothAccounts() {
     lt,
     tradesCombined,
     topCombined,
+    tradesNames,
+    topNames,
   );
 
   pipelineTimingLog(
@@ -397,7 +403,14 @@ function tosWriteIncrementalCombinedPreview_(ss, sheetName, header, newRows) {
   sh.setFrozenRows(1);
 }
 
-function tosDescribeCombinedSourceFiles_(dt, lt, tradesCombined, topCombined) {
+function tosDescribeCombinedSourceFiles_(
+  dt,
+  lt,
+  tradesCombined,
+  topCombined,
+  tradesNamesOpt,
+  topNamesOpt,
+) {
   const driveNames = {};
   function addParsed(pack) {
     if (!pack) return;
@@ -412,20 +425,14 @@ function tosDescribeCombinedSourceFiles_(dt, lt, tradesCombined, topCombined) {
   addParsed(dt);
   addParsed(lt);
 
+  const tradesNames =
+    tradesNamesOpt || tosCollectSheetSourceFileNames_(tradesCombined);
+  const topNames = topNamesOpt || tosCollectSheetSourceFileNames_(topCombined);
   const combinedNames = {};
-  function addSheet(sh) {
-    if (!sh || sh.getLastRow() < 2) return;
-    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-    const idx = headers.indexOf("SourceFile");
-    if (idx < 0) return;
-    const vals = sh.getRange(2, idx + 1, sh.getLastRow() - 1, 1).getValues();
-    for (let i = 0; i < vals.length; i++) {
-      const n = String(vals[i][0] || "").trim();
-      if (n) combinedNames[n] = true;
-    }
-  }
-  addSheet(tradesCombined);
-  addSheet(topCombined);
+  const tKeys = Object.keys(tradesNames);
+  for (let i = 0; i < tKeys.length; i++) combinedNames[tKeys[i]] = true;
+  const pKeys = Object.keys(topNames);
+  for (let i = 0; i < pKeys.length; i++) combinedNames[pKeys[i]] = true;
 
   const driveList = Object.keys(driveNames).sort();
   const onlyDrive = [];
@@ -450,8 +457,7 @@ function tosDescribeCombinedSourceFiles_(dt, lt, tradesCombined, topCombined) {
  * Does not call tosImportBothSectionsFromFolderBothAccounts
  * (that path still replaceEntireSheet: true).
  *
- * On this* When NEW is 0 this is a no-op (append is skipped).
- * freeze NEW is 0 / 0, so this is a no-op.
+ * When NEW is 0 this is a no-op (append is skipped).
  */
 function mergeIncrementalCombinedNewRowsBothAccounts() {
   const t0 = pipelineTimingNow();
@@ -731,9 +737,15 @@ function tosCollectSheetSourceFileNames_(sh) {
 /**
  * Yearlies already on BOTH Combined sheets. Incremental.csv is never skipped.
  */
-function tosYearlySourceFilesToSkip_(tradesCombined, topCombined) {
-  const tradesNames = tosCollectSheetSourceFileNames_(tradesCombined);
-  const topNames = tosCollectSheetSourceFileNames_(topCombined);
+function tosYearlySourceFilesToSkip_(
+  tradesCombined,
+  topCombined,
+  tradesNamesOpt,
+  topNamesOpt,
+) {
+  const tradesNames =
+    tradesNamesOpt || tosCollectSheetSourceFileNames_(tradesCombined);
+  const topNames = topNamesOpt || tosCollectSheetSourceFileNames_(topCombined);
   const skip = {};
   const keys = Object.keys(tradesNames);
   for (let i = 0; i < keys.length; i++) {
@@ -1190,7 +1202,12 @@ function debugListIncrementalFileSkip() {
   const topCombined = ss.getSheetByName(tosConfig.topCombinedSheetName);
   const tradesNames = tosCollectSheetSourceFileNames_(tradesCombined);
   const topNames = tosCollectSheetSourceFileNames_(topCombined);
-  const skip = tosYearlySourceFilesToSkip_(tradesCombined, topCombined);
+  const skip = tosYearlySourceFilesToSkip_(
+    tradesCombined,
+    topCombined,
+    tradesNames,
+    topNames,
+  );
 
   const lines = [];
   function walk(account) {
