@@ -1,14 +1,16 @@
 /**
  * Phase1IncrementalCombined.js
  *
- * Read-only Phase 4 Combined preview.
- * Parses the same LT/DT folders as Combined Both, builds the same
- * Combined out-grid, then counts rows whose dedupe key is not already
- * on TOS Trades - Combined / TOS Top - Combined.
+ * Incremental Combined + Incremental Push.
  *
- * Does not write those Combined sheets.
+ * Preview / merge parse the same LT/DT folders as Combined Both,
+ * skip yearlies already on BOTH Combined sheets, always re-parse
+ * Incremental.csv, then append only rows whose overlap key is new.
  * Does not call tosImportBothSectionsFromFolderBothAccounts
  * (that path still replaceEntireSheet: true).
+ *
+ * Incremental Push copies Combined rows whose SourceFile ends with
+ * Incremental.csv onto working TosTrades / TosTop (slice only).
  */
 
 function previewIncrementalCombinedMergeBothAccounts() {

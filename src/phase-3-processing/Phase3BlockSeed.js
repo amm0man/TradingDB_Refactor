@@ -1120,11 +1120,10 @@ function collectIncrementalCandidates_(cutoffTs) {
  * Phase 4 dry run. Does not write Helper, Staging, or Master.
  * Does not call populateStagingWithBlockLogicV3.
  *
- * On the 9/1/2026 16:41:18 freeze this must report candidates = 0
- * and then return. Seed is loaded only to prove seedBlocksFromMaster
- * still runs. Live seed count is logged; nothing is applied to Staging.
- *
- * If candidates > 0 the function STOPS. That is new work, not this freeze.
+ * Debug proof only. Not part of the weekly 1–11 path.
+ * If candidates === 0 it loads seedBlocksFromMaster and returns.
+ * If candidates > 0 it STOPS (use Incremental steps 9–11 instead).
+ * Does not write Helper, Staging, or Master.
  */
 function runIncrementalFromHelperDryRun() {
   const t0 = pipelineTimingNow();
@@ -1327,9 +1326,10 @@ function previewIncrementalSeededOutputFromHelper() {
  * Writes Incremental Seeded Preview. Does not write Helper / Staging / Master.
  * Does not change refreshAllScripts (that must stay a no-arg full rebuild).
  *
- * On the 9/1/2026 16:41:18 freeze candidates = 0, so the preview stays
- * 3 Helper header rows and 0 data rows. That is the proof that seed +
- * subset Step 4 can run without touching Staging.
+ * Weekly step 10. Writes Incremental Seeded Preview only.
+ * Candidates 0 → Helper header rows and 0 data rows.
+ * Candidates > 0 → those Helper rows run through seed + Step 4
+ * onto the preview sheet. Staging and Master are not written.
  */
 function previewIncrementalStep4FromHelper() {
   const t0 = pipelineTimingNow();

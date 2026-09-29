@@ -129,10 +129,10 @@ function replaceMasterFromStaging() {
  * rows only. Does not call appendStagingToMaster. Does not write
  * Helper or Staging.
  *
- * On the 9/1/2026 16:41:18 freeze candidates = 0, so this is a no-op.
- * When candidates > 0 later, leftover replay rows on the preview
- * sheet are skipped unless their fingerprint is a live candidate
- * and is not already on Master.
+ * Weekly step 11. Candidates 0 → no-op (Master already has these rows).
+ * Candidates > 0 → backup Master, then append Incremental Seeded Preview
+ * data rows whose fingerprint is a live candidate and is not already
+ * on Master. Does not call appendStagingToMaster.
  */
 function appendIncrementalPreviewToMaster() {
   const t0 = pipelineTimingNow();
