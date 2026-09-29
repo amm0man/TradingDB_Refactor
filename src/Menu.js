@@ -1,52 +1,73 @@
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
 
-  // --- Incremental: weekly / monthly path (use this) ---
+   // --- Incremental: weekly / monthly path (use this) ---
+  // Click 1 → 11 in order. Items 5–8 are the same functions as Full
+  // rebuild; they run on whatever is on the working sheets (the slice).
   const incrementalMenu = ui
     .createMenu("Incremental (weekly / monthly)")
     .addItem(
-      "Preview incremental Combined merge (no Combined write)",
+      "1. Preview Combined merge (no Combined write)",
       "previewIncrementalCombinedMergeBothAccounts",
     )
+    .addItem(
+      "2. Merge Combined (new rows only)",
+      "mergeIncrementalCombinedNewRowsBothAccounts",
+    )
+    .addItem(
+      "3. Preview Push (preview sheets only)",
+      "previewIncrementalPushFromCombined",
+    )
+    .addItem(
+      "4. Push Combined → TosTop / TosTrades (slice only)",
+      "pushIncrementalCombinedToWorkingSheets",
+    )
+    .addItem("5. Build Unified Import", "buildUnifiedImportV3")
+    .addItem("6. Run Schwab Mapping", "mapSchwabImportByHeadersV3")
+    .addItem(
+      "6b. Audit Schwab Mapping (optional)",
+      "auditSchwabMappingV3",
+    )
+    .addItem(
+      "7. Move Schwab Mapping → Import",
+      "copyMappingToImportByHeaders",
+    )
+    .addItem(
+      "8. Validate and Clean Import → Helper",
+      "validateAndCleanImportToHelperV3",
+    )
+    .addItem(
+      "9. Preview candidates (Helper vs Master)",
+      "previewIncrementalCandidatesFromHelper",
+    )
+    .addItem(
+      "10. Preview Step 4 (preview sheet only)",
+      "previewIncrementalStep4FromHelper",
+    )
+    .addItem(
+      "11. Append preview → Master (candidates only)",
+      "appendIncrementalPreviewToMaster",
+    )
+    .addSeparator()
     .addItem(
       "Inspect incremental delta (Helper vs Master)",
       "inspectIncrementalDeltaFromMaster",
     )
+    .addItem("Inspect seed blocks from Master", "inspectSeedBlocksFromMaster")
+    .addItem("Backup Master (Snapshot)", "backupMasterSheet")
+    .addSeparator()
     .addItem(
-      "Preview incremental candidates (Helper vs Master)",
-      "previewIncrementalCandidatesFromHelper",
+      "Debug: list Combined file-skip",
+      "debugListIncrementalFileSkip",
     )
     .addItem(
-      "Incremental dry run (0-row proof)",
+      "Debug: incremental dry run (0-row proof)",
       "runIncrementalFromHelperDryRun",
     )
     .addItem(
-      "Preview incremental seeded output (headers only)",
+      "Debug: preview seeded output (headers only)",
       "previewIncrementalSeededOutputFromHelper",
     )
-    .addItem(
-      "Preview incremental Step 4 (preview sheet only)",
-      "previewIncrementalStep4FromHelper",
-    )
-    .addItem(
-      "Append incremental preview → Master (candidates only)",
-      "appendIncrementalPreviewToMaster",
-    )
-    .addItem(
-      "Merge incremental Combined (new rows only)",
-      "mergeIncrementalCombinedNewRowsBothAccounts",
-    )
-    .addItem(
-      "Preview incremental Push (preview sheets only)",
-      "previewIncrementalPushFromCombined",
-    )
-    .addItem(
-      "Push incremental Combined → TosTop / TosTrades (slice only)",
-      "pushIncrementalCombinedToWorkingSheets",
-    )
-
-    .addSeparator()
-    .addSeparator()
     .addItem(
       "Debug: replay last print",
       "previewIncrementalStep4ReplayLastPrint",
@@ -54,10 +75,7 @@ function onOpen() {
     .addItem(
       "Debug: replay last calendar day",
       "previewIncrementalStep4ReplayLastCalendarDay",
-    )
-    .addItem("Inspect seed blocks from Master", "inspectSeedBlocksFromMaster")
-    .addItem("Backup Master (Snapshot)", "backupMasterSheet");
-
+    );
   // --- Full rebuild raw ingest (catastrophe / first load) ---
   const tosLegacyImportMenu = ui
     .createMenu("Legacy (one section at a time)")
