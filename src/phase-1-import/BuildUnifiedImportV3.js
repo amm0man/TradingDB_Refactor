@@ -69,19 +69,8 @@ function buildUnifiedImportV3() {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-    // 1) Account mode (DT/LT)
-    // We build BOTH accounts together in this function; this setting is recorded only for debugging.
-    const accountModeSetting = String(getSetting("accountMode", "") || "")
-      .trim()
-      .toUpperCase();
-    importIssuesSetMetric(
-      ctx,
-      "AccountModeSetting",
-      accountModeSetting || "(blank)",
-    );
-
     // =========================================================================
-    // 2) LOCAL HELPERS
+    // 1) LOCAL HELPERS
     //    Sheet lookup + TosTrades table access for this run.
     //    toStr now lives in Helpers.js (same name, now global).
     // =========================================================================

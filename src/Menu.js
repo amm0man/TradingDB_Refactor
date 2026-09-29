@@ -1,7 +1,7 @@
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
 
-   // --- Incremental: weekly / monthly path (use this) ---
+  // --- Incremental: weekly / monthly path (use this) ---
   // Click 1 → 11 in order. Items 5–8 are the same functions as Full
   // rebuild; they run on whatever is on the working sheets (the slice).
   const incrementalMenu = ui
@@ -24,14 +24,8 @@ function onOpen() {
     )
     .addItem("5. Build Unified Import", "buildUnifiedImportV3")
     .addItem("6. Run Schwab Mapping", "mapSchwabImportByHeadersV3")
-    .addItem(
-      "6b. Audit Schwab Mapping (optional)",
-      "auditSchwabMappingV3",
-    )
-    .addItem(
-      "7. Move Schwab Mapping → Import",
-      "copyMappingToImportByHeaders",
-    )
+    .addItem("6b. Audit Schwab Mapping (optional)", "auditSchwabMappingV3")
+    .addItem("7. Move Schwab Mapping → Import", "copyMappingToImportByHeaders")
     .addItem(
       "8. Validate and Clean Import → Helper",
       "validateAndCleanImportToHelperV3",
@@ -56,10 +50,7 @@ function onOpen() {
     .addItem("Inspect seed blocks from Master", "inspectSeedBlocksFromMaster")
     .addItem("Backup Master (Snapshot)", "backupMasterSheet")
     .addSeparator()
-    .addItem(
-      "Debug: list Combined file-skip",
-      "debugListIncrementalFileSkip",
-    )
+    .addItem("Debug: list Combined file-skip", "debugListIncrementalFileSkip")
     .addItem(
       "Debug: incremental dry run (0-row proof)",
       "runIncrementalFromHelperDryRun",
@@ -80,15 +71,6 @@ function onOpen() {
   const tosLegacyImportMenu = ui
     .createMenu("Legacy (one section at a time)")
     .addItem(
-      "Import TosTrades Current Account → TOS Trades - Combined",
-      "tosTradesImportFromFolderCurrentAccount",
-    )
-    .addItem(
-      "Import TosTop Current Account → TOS Top - Combined",
-      "tosTopImportFromFolderCurrentAccount",
-    )
-    .addSeparator()
-    .addItem(
       "Import TosTrades BOTH Accounts → TOS Trades - Combined",
       "tosTradesImportFromFolderBothAccounts",
     )
@@ -102,10 +84,6 @@ function onOpen() {
     .addItem("Set folder (LT): TosTop + TosTrades", "tosSetCsvFolderIdLT")
     .addItem("Set folder (DT): TosTop + TosTrades", "tosSetCsvFolderIdDT")
     .addSeparator()
-    .addItem(
-      "Import BOTH sections Current Account → Combined (FULL)",
-      "tosImportBothSectionsFromFolderCurrentAccount",
-    )
     .addItem(
       "Import BOTH sections BOTH Accounts → Combined (FULL)",
       "tosImportBothSectionsFromFolderBothAccounts",
@@ -133,7 +111,6 @@ function onOpen() {
 
   const settingsMenu = ui
     .createMenu("Settings")
-    .addItem("Set Account Mode DT / LT", "promptSetAccountMode")
     .addItem(
       "Toggle TOS Import DEBUG Alerts",
       "promptToggleTosImportDebugAlerts",

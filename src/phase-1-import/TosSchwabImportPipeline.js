@@ -171,12 +171,6 @@ function tosGetAccountFolderIdPropKey(Account) {
  * - Reads SettingService.gs key: accountMode (DT/LT)
  * - Falls back to DT if missing
  */
-function tosGetCurrentAccount() {
-  const v = String(getSetting("accountMode", "DT") || "")
-    .trim()
-    .toUpperCase();
-  return v === "DT" || v === "LT" ? v : "DT";
-}
 
 /** ---- Folder setup UI helpers ---- */
 
@@ -314,24 +308,6 @@ function tosRunFullTosToSchwabImportBothAccounts() {
 
 // ----- Current account only -----
 // Uses the Account Mode setting (DT or LT) to decide which folder to read.
-
-function tosTradesImportFromFolderCurrentAccount() {
-  const Account = tosGetCurrentAccount(); // "DT" or "LT"
-  tosTradesImportFromFolder(tosGetAccountFolderIdPropKey(Account), Account);
-}
-
-function tosTopImportFromFolderCurrentAccount() {
-  const Account = tosGetCurrentAccount(); // "DT" or "LT"
-  tosTopImportFromFolder(tosGetAccountFolderIdPropKey(Account), Account);
-}
-
-function tosImportBothSectionsFromFolderCurrentAccount() {
-  const Account = tosGetCurrentAccount();
-  tosImportBothSectionsFromFolder(
-    tosGetAccountFolderIdPropKey(Account),
-    Account,
-  );
-}
 
 function tosImportBothSectionsFromFolderBothAccounts() {
   const tBoth = pipelineTimingNow();
@@ -1550,7 +1526,6 @@ function tosTopWriteCombinedFromParsed(
  *
  *  Called by the menu wrappers:
  *    - tosTradesImportFromFolderBothAccounts()
- *    - tosTradesImportFromFolderCurrentAccount()
  */
 function tosTradesImportFromFolder(folderIdPropKey, Account) {
   const tStep = pipelineTimingNow();
@@ -1937,7 +1912,6 @@ function tosTradesParseExecTime(v) {
  *
  *  Called by the menu wrappers:
  *    - tosTopImportFromFolderBothAccounts()
- *    - tosTopImportFromFolderCurrentAccount()
  */
 function tosTopImportFromFolder(folderIdPropKey, Account) {
   const tStep = pipelineTimingNow();
