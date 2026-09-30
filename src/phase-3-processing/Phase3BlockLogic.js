@@ -56,6 +56,52 @@
 // built from later opens. Opt Expired at 00:39 then attached to the
 // 13:20 IC / 10:26 CCS and closed TG001 before the real open.
 
+function normalizeCpToken_(raw) {
+  const s = String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace("CALL", "C")
+    .replace("PUT", "P");
+  if (s.charAt(0) === "C") return "C";
+  if (s.charAt(0) === "P") return "P";
+  return "";
+}
+
+/**
+ * Opening-leg C/P set from Strategy Type / spread-id strat token.
+ * CCS/CDS = calls only. PCS/PDS = puts only.
+ * IC / iron condor / butterfly = both (do not reject a wing).
+ * Unknown → null (resolver allows either; seed-safe).
+ */
+function inferSpreadCpSet_(strat) {
+  const s = String(strat || "").toUpperCase();
+  if (
+    s.indexOf("BUTTERFLY") !== -1 ||
+    s.indexOf("IRON CONDOR") !== -1 ||
+    s.indexOf("SHORT IC") !== -1 ||
+    s.indexOf("LONG IC") !== -1 ||
+    /(^|[^A-Z])IC([^A-Z]|$)/.test(s)
+  ) {
+    return { C: true, P: true };
+  }
+  if (s.indexOf("PCS") !== -1 || s.indexOf("PDS") !== -1) {
+    return { C: false, P: true };
+  }
+  if (s.indexOf("CCS") !== -1 || s.indexOf("CDS") !== -1) {
+    return { C: true, P: false };
+  }
+  return null;
+}
+
+function spreadWindowAllowsCp_(g, cp) {
+  if (!cp) return true;
+  if (!g || !g.cpSet) return true;
+  if (!g.cpSet.C && !g.cpSet.P) return true;
+  if (cp === "C") return !!g.cpSet.C;
+  if (cp === "P") return !!g.cpSet.P;
+  return true;
+}
+
 function spreadWindowOpenAt_(g, rowMs) {
   // Seed windows have no firstOpenMs — leave them eligible (URA/XE).
   if (rowMs == null || !isFinite(rowMs)) return true;
@@ -72,13 +118,17 @@ function resolveLiveSpreadGroupId(
   spreadRangeMap,
   blocks,
   rowMs,
+  cp,
 ) {
   function candidatesFor(stratKey) {
     const rangeKey = `${acct}|${ticker}|${expStr}|${stratKey}`;
     const rangeGroups = spreadRangeMap[rangeKey] || [];
     return rangeGroups.filter(
       (g) =>
-        strike >= g.min && strike <= g.max && spreadWindowOpenAt_(g, rowMs),
+        strike >= g.min &&
+        strike <= g.max &&
+        spreadWindowOpenAt_(g, rowMs) &&
+        spreadWindowAllowsCp_(g, cp),
     );
   }
 
@@ -108,7 +158,10 @@ function resolveLiveSpreadGroupId(
       if (String(parts[2]) !== prefixExp) return;
       const extra = (spreadRangeMap[rangeKey] || []).filter(
         (g) =>
-          strike >= g.min && strike <= g.max && spreadWindowOpenAt_(g, rowMs),
+          strike >= g.min &&
+          strike <= g.max &&
+          spreadWindowOpenAt_(g, rowMs) &&
+          spreadWindowAllowsCp_(g, cp),
       );
       extra.forEach(function (g) {
         candidates.push(g);
@@ -237,6 +290,7 @@ function mergeSeededSpreadWindows_(spreadRangeMap, blocks) {
       max: parsed.max,
       groupId: parsed.groupId,
       firstOpenMs: seedFirst,
+      cpSet: inferSpreadCpSet_(parsed.strat),
     });
   }
   return map;
@@ -765,6 +819,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
     let openGroupStrategyMap = {};
     let openGroupFirstRowMap = {};
     let openGroupFirstTsMap = {};
+    let openGroupCpMap = {};
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -806,6 +861,11 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       if (!openGroupStrategyMap[groupKey])
         openGroupStrategyMap[groupKey] = strat;
       openGroupStrikesMap[groupKey].push(strike);
+      const cpTok = normalizeCpToken_(row[colMap["call/put"] - 1]);
+      if (!openGroupCpMap[groupKey])
+        openGroupCpMap[groupKey] = { C: false, P: false };
+      if (cpTok === "C") openGroupCpMap[groupKey].C = true;
+      if (cpTok === "P") openGroupCpMap[groupKey].P = true;
       const tsVal = row[colMap["trade time stamp"] - 1];
       if (tsVal instanceof Date && !isNaN(tsVal.getTime())) {
         const tsMs = tsVal.getTime();
@@ -853,12 +913,24 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         ) {
           found.firstOpenMs = firstMs;
         }
+        const addCp = openGroupCpMap[groupKey];
+        if (addCp) {
+          if (!found.cpSet) found.cpSet = { C: false, P: false };
+          if (addCp.C) found.cpSet.C = true;
+          if (addCp.P) found.cpSet.P = true;
+        }
       } else {
         spreadRangeMap[rangeKey].push({
           min: strikeMin,
           max: strikeMax,
           groupId: spreadGroupId,
           firstOpenMs: firstMs != null ? firstMs : null,
+          cpSet: openGroupCpMap[groupKey]
+            ? {
+                C: !!openGroupCpMap[groupKey].C,
+                P: !!openGroupCpMap[groupKey].P,
+              }
+            : inferSpreadCpSet_(stratPart),
         });
       }
     }
@@ -1329,11 +1401,12 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
             : (exp_ || "").toString();
         const strike_ = Number(row[colMap["option strike"] - 1]) || 0;
         if (expStr_ && strike_) {
-                   const rowTsVal_ = row[colMap["trade time stamp"] - 1];
+          const rowTsVal_ = row[colMap["trade time stamp"] - 1];
           const rowMs_ =
             rowTsVal_ instanceof Date && !isNaN(rowTsVal_.getTime())
               ? rowTsVal_.getTime()
               : null;
+          const cp_ = normalizeCpToken_(row[colMap["call/put"] - 1]);
           const resolved = resolveLiveSpreadGroupId(
             acct,
             ticker,
@@ -1343,6 +1416,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
             spreadRangeMap,
             blocks,
             rowMs_,
+            cp_,
           );
           if (resolved) {
             row[colMap["spread group id"] - 1] = resolved;
