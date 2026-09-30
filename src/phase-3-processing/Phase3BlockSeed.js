@@ -47,6 +47,7 @@ var FAMILY_S_TICKER_ALIASES_ = {
   ENCUF: "EU",
   ISENF: "ISOU",
   SV: "SMR",
+  CUR: "ISENF",
 };
 
 /**
@@ -510,7 +511,7 @@ function inspectSeedBlocksFromMaster() {
       "\nFamily S retired rename sources: " +
       retiredCount +
       "\n\nOpen sheet Block Seed Preview.\n" +
-      "Look at LT|ENCUF, LT|ISENF, LT|SV — should be CLOSED.\n" +
+      "Look at LT|ENCUF, LT|ISENF, LT|SV, LT|CUR — should be CLOSED.\n" +
       "Dest keys LT|EU, LT|ISOU, LT|SMR keep their own last-row state.\n\n" +
       "Full rebuild is unchanged — populateStagingWithBlockLogicV3() still starts empty.",
   );
@@ -2017,7 +2018,6 @@ function previewIncrementalStep4ReplayLastCalendarDay() {
       "Did not write Helper / Staging / Master data.",
   );
 }
-
 
 /**
  * Debug only. Not weekly steps 9–11.
