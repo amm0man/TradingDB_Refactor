@@ -52,6 +52,17 @@
 //   Looks up the currently open spread-group ID for a given account/ticker/
 //   expiration/strategy so closing legs can inherit the correct group.
 // =========================================================================
+// SPX RAD-before-open (2026-09-30): Sub-pass B used to expose a window
+// built from later opens. Opt Expired at 00:39 then attached to the
+// 13:20 IC / 10:26 CCS and closed TG001 before the real open.
+
+function spreadWindowOpenAt_(g, rowMs) {
+  // Seed windows have no firstOpenMs — leave them eligible (URA/XE).
+  if (rowMs == null || !isFinite(rowMs)) return true;
+  if (!g || g.firstOpenMs == null || !isFinite(g.firstOpenMs)) return true;
+  return g.firstOpenMs <= rowMs;
+}
+
 function resolveLiveSpreadGroupId(
   acct,
   ticker,
@@ -60,11 +71,15 @@ function resolveLiveSpreadGroupId(
   strike,
   spreadRangeMap,
   blocks,
+  rowMs,
 ) {
   function candidatesFor(stratKey) {
     const rangeKey = `${acct}|${ticker}|${expStr}|${stratKey}`;
     const rangeGroups = spreadRangeMap[rangeKey] || [];
-    return rangeGroups.filter((g) => strike >= g.min && strike <= g.max);
+    return rangeGroups.filter(
+      (g) =>
+        strike >= g.min && strike <= g.max && spreadWindowOpenAt_(g, rowMs),
+    );
   }
 
   function pickStartedGroup(list) {
@@ -92,7 +107,8 @@ function resolveLiveSpreadGroupId(
       if (String(parts[1]).toUpperCase() !== prefixTkr) return;
       if (String(parts[2]) !== prefixExp) return;
       const extra = (spreadRangeMap[rangeKey] || []).filter(
-        (g) => strike >= g.min && strike <= g.max,
+        (g) =>
+          strike >= g.min && strike <= g.max && spreadWindowOpenAt_(g, rowMs),
       );
       extra.forEach(function (g) {
         candidates.push(g);
@@ -111,6 +127,8 @@ function hasContainingSpreadWindow(
   strike,
   spreadRangeMap,
 ) {
+  // Untimed on purpose. A 00:39 RAD that we refuse to attach still has a
+  // later same-day window. That is not a missing-open WARN.
   const prefixAcct = String(acct || "").toUpperCase();
   const prefixTkr = String(ticker || "").toUpperCase();
   const prefixExp = String(expStr || "");
@@ -210,10 +228,15 @@ function mergeSeededSpreadWindows_(spreadRangeMap, blocks) {
       }
     }
     if (already) continue;
+    let seedFirst = null;
+    if (b.openTs instanceof Date && !isNaN(b.openTs.getTime())) {
+      seedFirst = b.openTs.getTime();
+    }
     map[rangeKey].push({
       min: parsed.min,
       max: parsed.max,
       groupId: parsed.groupId,
+      firstOpenMs: seedFirst,
     });
   }
   return map;
@@ -442,44 +465,44 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       : Math.round(rawPost * 1e8) / 1e8;
   }
 
-    function isMatchingSplitRowForBlock_(runningBeforeSplit, splitInfo) {
-      if (!splitInfo) return true;
+  function isMatchingSplitRowForBlock_(runningBeforeSplit, splitInfo) {
+    if (!splitInfo) return true;
 
-      if (
-        isFinite(splitInfo.preQty) &&
-        Math.abs(splitInfo.preQty - runningBeforeSplit) < 1e-8
-      ) {
-        return true;
-      }
-
-      if (isFinite(splitInfo.postQty)) {
-        const expectedPost = computeExpectedPostSplitQty_(
-          runningBeforeSplit,
-          splitInfo,
-        );
-        if (
-          isFinite(expectedPost) &&
-          Math.abs(splitInfo.postQty - expectedPost) < 1e-8
-        ) {
-          return true;
-        }
-      }
-
-      // Notes PRE/POST are Phase 1's guess from one TosTop number.
-      // PANW "SHARES 1.0" was stored as POST=1 / PRE=0.5, but the live
-      // lot is not 0.5. Same-ticker split: live book × ratio is truth.
-      // Do not apply to a flat book (running 0).
-      if (
-        runningBeforeSplit > 1e-8 &&
-        isFinite(splitInfo.numerator) &&
-        isFinite(splitInfo.denominator) &&
-        splitInfo.denominator > 0
-      ) {
-        return true;
-      }
-
-      return false;
+    if (
+      isFinite(splitInfo.preQty) &&
+      Math.abs(splitInfo.preQty - runningBeforeSplit) < 1e-8
+    ) {
+      return true;
     }
+
+    if (isFinite(splitInfo.postQty)) {
+      const expectedPost = computeExpectedPostSplitQty_(
+        runningBeforeSplit,
+        splitInfo,
+      );
+      if (
+        isFinite(expectedPost) &&
+        Math.abs(splitInfo.postQty - expectedPost) < 1e-8
+      ) {
+        return true;
+      }
+    }
+
+    // Notes PRE/POST are Phase 1's guess from one TosTop number.
+    // PANW "SHARES 1.0" was stored as POST=1 / PRE=0.5, but the live
+    // lot is not 0.5. Same-ticker split: live book × ratio is truth.
+    // Do not apply to a flat book (running 0).
+    if (
+      runningBeforeSplit > 1e-8 &&
+      isFinite(splitInfo.numerator) &&
+      isFinite(splitInfo.denominator) &&
+      splitInfo.denominator > 0
+    ) {
+      return true;
+    }
+
+    return false;
+  }
 
   function findRenameSourceStockBlockForSplit_(
     acct,
@@ -636,7 +659,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       return;
     }
 
-        const colMap = {};
+    const colMap = {};
     helperData[0].forEach((h, i) => {
       if (typeof h === "string" && h.trim())
         colMap[h.trim().toLowerCase()] = i + 1;
@@ -741,6 +764,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
     let openGroupStrikesMap = {};
     let openGroupStrategyMap = {};
     let openGroupFirstRowMap = {};
+    let openGroupFirstTsMap = {};
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -782,6 +806,16 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       if (!openGroupStrategyMap[groupKey])
         openGroupStrategyMap[groupKey] = strat;
       openGroupStrikesMap[groupKey].push(strike);
+      const tsVal = row[colMap["trade time stamp"] - 1];
+      if (tsVal instanceof Date && !isNaN(tsVal.getTime())) {
+        const tsMs = tsVal.getTime();
+        if (
+          openGroupFirstTsMap[groupKey] == null ||
+          tsMs < openGroupFirstTsMap[groupKey]
+        ) {
+          openGroupFirstTsMap[groupKey] = tsMs;
+        }
+      }
     }
 
     // ----- Sub-pass B: Build spreadKeyMap and spreadRangeMap -----
@@ -804,11 +838,29 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
 
       const rangeKey = `${acctPart}|${tkrPart}|${expPart}|${stratPart}`;
       if (!spreadRangeMap[rangeKey]) spreadRangeMap[rangeKey] = [];
-      spreadRangeMap[rangeKey].push({
-        min: strikeMin,
-        max: strikeMax,
-        groupId: spreadGroupId,
-      });
+      const firstMs = openGroupFirstTsMap[groupKey];
+      let found = null;
+      for (let gi = 0; gi < spreadRangeMap[rangeKey].length; gi++) {
+        if (spreadRangeMap[rangeKey][gi].groupId === spreadGroupId) {
+          found = spreadRangeMap[rangeKey][gi];
+          break;
+        }
+      }
+      if (found) {
+        if (
+          firstMs != null &&
+          (found.firstOpenMs == null || firstMs < found.firstOpenMs)
+        ) {
+          found.firstOpenMs = firstMs;
+        }
+      } else {
+        spreadRangeMap[rangeKey].push({
+          min: strikeMin,
+          max: strikeMax,
+          groupId: spreadGroupId,
+          firstOpenMs: firstMs != null ? firstMs : null,
+        });
+      }
     }
 
     // ----- Sub-pass C: Stamp Spread Group IDs -----
@@ -879,7 +931,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
     // Phase 4 hook: incremental runner may pass seedBlocksFromMaster().
     // Menu + refreshAllScripts call this with no argument, so blocks stays {}.
     // Full-rebuild results must not change.
-       let blocks = seedBlocks && typeof seedBlocks === "object" ? seedBlocks : {};
+    let blocks = seedBlocks && typeof seedBlocks === "object" ? seedBlocks : {};
     // Incremental: Helper subset has no August opens. Put the live seeded
     // CDS/CCS/… windows into spreadRangeMap so blank-spread covers can attach.
     // Full rebuild passes no seed → this loop does nothing.
@@ -1247,7 +1299,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         }
       }
 
-          // === LIVE SPREAD GROUP ID RESOLUTION FOR CLOSING/RAD LEGS ================
+      // === LIVE SPREAD GROUP ID RESOLUTION FOR CLOSING/RAD LEGS ================
       // WHY: Sub-pass C left closing Spread Group IDs blank on purpose.
       // Incremental hole (URA/XE 2026-09-30): slice Mapping never saw the
       // CDS package, so Strategy Type is Short Call and this run has no
@@ -1277,6 +1329,11 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
             : (exp_ || "").toString();
         const strike_ = Number(row[colMap["option strike"] - 1]) || 0;
         if (expStr_ && strike_) {
+                   const rowTsVal_ = row[colMap["trade time stamp"] - 1];
+          const rowMs_ =
+            rowTsVal_ instanceof Date && !isNaN(rowTsVal_.getTime())
+              ? rowTsVal_.getTime()
+              : null;
           const resolved = resolveLiveSpreadGroupId(
             acct,
             ticker,
@@ -1285,6 +1342,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
             strike_,
             spreadRangeMap,
             blocks,
+            rowMs_,
           );
           if (resolved) {
             row[colMap["spread group id"] - 1] = resolved;
@@ -1920,7 +1978,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       );
     }
 
-      const outputGrid = [helperData[0], helperData[1], helperData[2], ...data];
+    const outputGrid = [helperData[0], helperData[1], helperData[2], ...data];
     destSheet.clearContents();
     destSheet
       .getRange(1, 1, outputGrid.length, outputGrid[0].length)
@@ -1939,9 +1997,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       const stTm = stHeaders.indexOf("trade time") + 1;
       const nData = outputGrid.length - 3;
       if (stTs > 0) {
-        destSheet
-          .getRange(4, stTs, nData, 1)
-          .setNumberFormat("M/d/yyyy HH:mm");
+        destSheet.getRange(4, stTs, nData, 1).setNumberFormat("M/d/yyyy HH:mm");
       }
       if (stTm > 0) {
         destSheet.getRange(4, stTm, nData, 1).setNumberFormat("HH:mm");
