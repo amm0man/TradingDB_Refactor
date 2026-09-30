@@ -102,11 +102,23 @@ function spreadWindowAllowsCp_(g, cp) {
   return true;
 }
 
-function spreadWindowOpenAt_(g, rowMs) {
+function spreadWindowOpenAt_(g, rowMs, rowDay, allowSameDayExpiredRad) {
   // Seed windows have no firstOpenMs — leave them eligible (URA/XE).
   if (rowMs == null || !isFinite(rowMs)) return true;
   if (!g || g.firstOpenMs == null || !isFinite(g.firstOpenMs)) return true;
-  return g.firstOpenMs <= rowMs;
+  if (g.firstOpenMs <= rowMs) return true;
+  // Same-day Opt Expired RAD: sort already ran the opens first
+  // (non-RAD before RAD on that yyyy-MM-dd). Clock is still 00:39,
+  // so firstOpenMs <= rowMs is false. Allow this calendar day only.
+  if (
+    allowSameDayExpiredRad &&
+    rowDay &&
+    g.firstOpenDay &&
+    g.firstOpenDay === rowDay
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function resolveLiveSpreadGroupId(
@@ -119,6 +131,8 @@ function resolveLiveSpreadGroupId(
   blocks,
   rowMs,
   cp,
+  rowDay,
+  allowSameDayExpiredRad,
 ) {
   function candidatesFor(stratKey) {
     const rangeKey = `${acct}|${ticker}|${expStr}|${stratKey}`;
@@ -127,7 +141,7 @@ function resolveLiveSpreadGroupId(
       (g) =>
         strike >= g.min &&
         strike <= g.max &&
-        spreadWindowOpenAt_(g, rowMs) &&
+        spreadWindowOpenAt_(g, rowMs, rowDay, allowSameDayExpiredRad) &&
         spreadWindowAllowsCp_(g, cp),
     );
   }
@@ -160,7 +174,7 @@ function resolveLiveSpreadGroupId(
         (g) =>
           strike >= g.min &&
           strike <= g.max &&
-          spreadWindowOpenAt_(g, rowMs) &&
+          spreadWindowOpenAt_(g, rowMs, rowDay, allowSameDayExpiredRad) &&
           spreadWindowAllowsCp_(g, cp),
       );
       extra.forEach(function (g) {
@@ -290,6 +304,7 @@ function mergeSeededSpreadWindows_(spreadRangeMap, blocks) {
       max: parsed.max,
       groupId: parsed.groupId,
       firstOpenMs: seedFirst,
+      firstOpenDay: "",
       cpSet: inferSpreadCpSet_(parsed.strat),
     });
   }
@@ -912,6 +927,11 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
           (found.firstOpenMs == null || firstMs < found.firstOpenMs)
         ) {
           found.firstOpenMs = firstMs;
+          found.firstOpenDay = Utilities.formatDate(
+            new Date(firstMs),
+            tz,
+            "yyyy-MM-dd",
+          );
         }
         const addCp = openGroupCpMap[groupKey];
         if (addCp) {
@@ -925,6 +945,10 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
           max: strikeMax,
           groupId: spreadGroupId,
           firstOpenMs: firstMs != null ? firstMs : null,
+          firstOpenDay:
+            firstMs != null
+              ? Utilities.formatDate(new Date(firstMs), tz, "yyyy-MM-dd")
+              : "",
           cpSet: openGroupCpMap[groupKey]
             ? {
                 C: !!openGroupCpMap[groupKey].C,
@@ -1407,6 +1431,18 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
               ? rowTsVal_.getTime()
               : null;
           const cp_ = normalizeCpToken_(row[colMap["call/put"] - 1]);
+          const rowDay_ =
+            rowTsVal_ instanceof Date && !isNaN(rowTsVal_.getTime())
+              ? Utilities.formatDate(rowTsVal_, tz, "yyyy-MM-dd")
+              : "";
+          const acctAct_ =
+            colMap["account actions"] !== undefined
+              ? String(row[colMap["account actions"] - 1] || "")
+                  .trim()
+                  .toUpperCase()
+              : "";
+          const expiredRad_ =
+            action === "RAD" && acctAct_.indexOf("OPT EXPIRED") !== -1;
           const resolved = resolveLiveSpreadGroupId(
             acct,
             ticker,
@@ -1417,6 +1453,8 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
             blocks,
             rowMs_,
             cp_,
+            rowDay_,
+            expiredRad_,
           );
           if (resolved) {
             row[colMap["spread group id"] - 1] = resolved;
