@@ -2017,3 +2017,194 @@ function previewIncrementalStep4ReplayLastCalendarDay() {
       "Did not write Helper / Staging / Master data.",
   );
 }
+
+
+/**
+ * Debug only. Not weekly steps 9–11.
+ *
+ * Menu 10 compares Helper to the current Master last stamp. After the
+ * 9/28 append that stamp is 9/25/2026, so URA 9/2 and XE 9/11 are never
+ * candidates and Incremental Seeded Preview stays blank.
+ *
+ * This replay sends every current Helper data row through seed + Step 4
+ * with seed as-of just before the slice starts. That is the pre-increment
+ * book (URA 40/50 unit 6, XE 20/30 unit 4) without the SC rows already
+ * sitting on Master.
+ *
+ * Writes Incremental Seeded Preview only.
+ * Does not write Helper / Staging / Master.
+ * Does not change refreshAllScripts.
+ */
+function previewIncrementalStep4ReplayHelperSlice() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+  const helper = ss.getSheetByName("Helper");
+  const master = ss.getSheetByName("Master");
+  const staging = ss.getSheetByName("Staging");
+  if (!helper) {
+    uiAlertSafe('Sheet "Helper" not found.');
+    return;
+  }
+  if (!master) {
+    uiAlertSafe('Sheet "Master" not found.');
+    return;
+  }
+
+  const hLast = helper.getLastRow();
+  const hLastCol = helper.getLastColumn();
+  if (hLast < 4) {
+    uiAlertSafe("Helper has no data rows (need row 4+).");
+    return;
+  }
+
+  const dataRowCount = hLast - 3;
+  if (dataRowCount > 2000) {
+    uiAlertSafe(
+      "Stopped: Helper has " +
+        dataRowCount +
+        " data rows.\n\n" +
+        "This debug replay is only for the incremental Helper slice.\n" +
+        "A full Helper book would seed from 2021 and rebuild Preview.\n" +
+        "Did not write Staging or Master.",
+    );
+    return;
+  }
+
+  const hGrid = helper.getRange(1, 1, hLast, hLastCol).getValues();
+  const hCol = {};
+  hGrid[0].forEach(function (h, i) {
+    const norm = String(h || "")
+      .trim()
+      .toLowerCase();
+    if (norm) hCol[norm] = i;
+  });
+
+  const helperRowNumbers = [];
+  let minTs = null;
+  let maxTs = null;
+  for (let r = 3; r < hGrid.length; r++) {
+    const acct = String(
+      hCol["account"] !== undefined ? hGrid[r][hCol["account"]] : "",
+    ).trim();
+    if (!acct) continue;
+    helperRowNumbers.push(r + 1);
+    const ts = parseTradeTimeStamp(
+      hCol["trade time stamp"] !== undefined
+        ? hGrid[r][hCol["trade time stamp"]]
+        : null,
+      hCol["trade date"] !== undefined ? hGrid[r][hCol["trade date"]] : null,
+      hCol["trade time"] !== undefined ? hGrid[r][hCol["trade time"]] : null,
+      ss,
+    );
+    if (!ts) continue;
+    if (!minTs || ts.getTime() < minTs.getTime()) minTs = ts;
+    if (!maxTs || ts.getTime() > maxTs.getTime()) maxTs = ts;
+  }
+
+  if (!helperRowNumbers.length) {
+    uiAlertSafe("Helper slice has no Account rows to replay.");
+    return;
+  }
+  if (!minTs) {
+    uiAlertSafe("Helper slice has no parseable Trade Time Stamp.");
+    return;
+  }
+
+  // Inclusive as-of would keep Master rows at the first slice stamp
+  // (the 9/28 SC covers). Seed one ms earlier.
+  const asOfTs = new Date(minTs.getTime() - 1);
+  const blocks = seedBlocksFromMaster(asOfTs);
+  const keys = Object.keys(blocks);
+  let live = 0;
+  let uraSeed = "";
+  let xeSeed = "";
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const b = blocks[k];
+    if (Number(b.unit || 0) !== 0 || Number(b.runningQty || 0) !== 0) {
+      live++;
+    }
+    if (k.indexOf("SPREAD-URA-CDS-2027-01-15-40-50") !== -1) {
+      uraSeed = k + " unit=" + b.unit + " qty=" + b.runningQty;
+    }
+    if (k.indexOf("SPREAD-XE-CDS-2027-01-15-20-30") !== -1) {
+      xeSeed = k + " unit=" + b.unit + " qty=" + b.runningQty;
+    }
+  }
+
+  const stagingLastBefore = staging ? staging.getLastRow() : "";
+  const masterLastBefore = master.getLastRow();
+
+  populateStagingWithBlockLogicV3(blocks, {
+    destSheetName: "Incremental Seeded Preview",
+    helperRowNumbers: helperRowNumbers,
+    muteSuccessAlert: true,
+  });
+
+  const preview = ss.getSheetByName("Incremental Seeded Preview");
+  if (preview && preview.getFrozenRows() !== 3) preview.setFrozenRows(3);
+  const previewLast = preview ? preview.getLastRow() : "";
+  const stagingLastAfter = staging ? staging.getLastRow() : "";
+  const masterLastAfter = master.getLastRow();
+
+  const minTxt = Utilities.formatDate(minTs, tz, "M/d/yyyy HH:mm:ss");
+  const maxTxt = maxTs
+    ? Utilities.formatDate(maxTs, tz, "M/d/yyyy HH:mm:ss")
+    : "";
+  const asOfTxt = Utilities.formatDate(asOfTs, tz, "M/d/yyyy HH:mm:ss");
+
+  pipelineTimingLog(
+    "previewIncrementalStep4ReplayHelperSlice",
+    t0,
+    "helperRows=" +
+      helperRowNumbers.length +
+      " previewGetLastRow=" +
+      previewLast +
+      " seedKeys=" +
+      keys.length +
+      " live=" +
+      live,
+  );
+
+  uiAlertSafe(
+    "Incremental Step 4 Helper-slice replay OK.\n\n" +
+      "Helper rows sent to Step 4: " +
+      helperRowNumbers.length +
+      "\n" +
+      "Helper ts range: " +
+      minTxt +
+      " → " +
+      maxTxt +
+      "\n" +
+      "Seed as-of (just before slice): " +
+      asOfTxt +
+      "\n" +
+      "Seed keys / live: " +
+      keys.length +
+      " / " +
+      live +
+      "\n" +
+      "URA seed: " +
+      (uraSeed || "(spread key not in seed)") +
+      "\n" +
+      "XE seed: " +
+      (xeSeed || "(spread key not in seed)") +
+      "\n" +
+      "Preview getLastRow: " +
+      previewLast +
+      "\n" +
+      "Staging last row before/after: " +
+      stagingLastBefore +
+      " / " +
+      stagingLastAfter +
+      "\n" +
+      "Master last row before/after: " +
+      masterLastBefore +
+      " / " +
+      masterLastAfter +
+      "\n\n" +
+      "Open Incremental Seeded Preview and filter Ticker = URA and XE.\n" +
+      "Did not write Helper / Staging / Master data.",
+  );
+}

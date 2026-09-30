@@ -130,6 +130,95 @@ function hasContainingSpreadWindow(
   return false;
 }
 
+/**
+ * Parse a seeded spread block key.
+ * Example: DT|SPREAD-URA-CDS-2027-01-15-40-50
+ *          → acct DT, ticker URA, strat CDS, exp 2027-01-15, min 40, max 50
+ *
+ * Spread Group ID format from Sub-pass B:
+ *   SPREAD-{TICKER}-{STRAT}-{yyyy-MM-dd}-{min}-{max}
+ * Strat may contain spaces (SHORT IC, IRON CONDOR). Parse date + strikes
+ * from the right so those names stay intact.
+ *
+ * Returns null for stock keys (DT|AAPL) and single-option keys
+ * (DT|URA|2027-01-15|50|C). Seed-only helper.
+ */
+function parseSeedSpreadKey_(blockKey) {
+  const raw = String(blockKey || "");
+  const pipe = raw.indexOf("|");
+  if (pipe < 1) return null;
+  const acct = raw.slice(0, pipe).toUpperCase();
+  const spreadId = raw.slice(pipe + 1);
+  const m = String(spreadId).match(
+    /^SPREAD-(.+)-(\d{4}-\d{2}-\d{2})-([0-9.]+)-([0-9.]+)$/i,
+  );
+  if (!m) return null;
+  const mid = String(m[1] || "");
+  const dash = mid.indexOf("-");
+  if (dash < 1) return null;
+  const min = Number(m[3]);
+  const max = Number(m[4]);
+  if (!isFinite(min) || !isFinite(max)) return null;
+  return {
+    acct: acct,
+    ticker: mid.slice(0, dash).toUpperCase(),
+    strat: mid.slice(dash + 1).toUpperCase(),
+    expStr: m[2],
+    min: min,
+    max: max,
+    groupId: spreadId,
+  };
+}
+
+/**
+ * Copy live seeded spread windows into spreadRangeMap.
+ *
+ * Incremental helperRowNumbers is only the new slice, so Sub-pass A/B
+ * never see the August URA 40/50 or XE 20/30 opens. Seed already has
+ * those keys with unit/qty still open. Resolver + hasContainingSpreadWindow
+ * both read spreadRangeMap, so the windows have to live there.
+ *
+ * Live = unit > 0 OR positionId OR openTs. Already-flat seed keys stay out.
+ * That is not the 2026-09-13 unit>0 miss gate inside pickStartedGroup —
+ * we are only deciding which historical windows exist at the start of
+ * this increment, not which candidate wins mid-loop.
+ *
+ * No-op when seedBlocks is {} (full rebuild).
+ */
+function mergeSeededSpreadWindows_(spreadRangeMap, blocks) {
+  const map = spreadRangeMap || {};
+  const keys = Object.keys(blocks || {});
+  for (let i = 0; i < keys.length; i++) {
+    const parsed = parseSeedSpreadKey_(keys[i]);
+    if (!parsed) continue;
+    const b = blocks[keys[i]] || {};
+    if (!(b.unit > 0 || b.positionId || b.openTs)) continue;
+    const rangeKey =
+      parsed.acct +
+      "|" +
+      parsed.ticker +
+      "|" +
+      parsed.expStr +
+      "|" +
+      parsed.strat;
+    if (!map[rangeKey]) map[rangeKey] = [];
+    let already = false;
+    for (let j = 0; j < map[rangeKey].length; j++) {
+      if (map[rangeKey][j].groupId === parsed.groupId) {
+        already = true;
+        break;
+      }
+    }
+    if (already) continue;
+    map[rangeKey].push({
+      min: parsed.min,
+      max: parsed.max,
+      groupId: parsed.groupId,
+    });
+  }
+  return map;
+}
+
 // ==================== UPDATED BLOCK LOGIC V3 - FIXED ====================
 /**
  * populateStagingWithBlockLogicV3
@@ -790,7 +879,11 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
     // Phase 4 hook: incremental runner may pass seedBlocksFromMaster().
     // Menu + refreshAllScripts call this with no argument, so blocks stays {}.
     // Full-rebuild results must not change.
-    let blocks = seedBlocks && typeof seedBlocks === "object" ? seedBlocks : {};
+       let blocks = seedBlocks && typeof seedBlocks === "object" ? seedBlocks : {};
+    // Incremental: Helper subset has no August opens. Put the live seeded
+    // CDS/CCS/… windows into spreadRangeMap so blank-spread covers can attach.
+    // Full rebuild passes no seed → this loop does nothing.
+    mergeSeededSpreadWindows_(spreadRangeMap, blocks);
     const tStep4 = pipelineTimingNow();
 
     for (let i = 0; i < data.length; i++) {
@@ -1154,18 +1247,29 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         }
       }
 
-      // === LIVE SPREAD GROUP ID RESOLUTION FOR CLOSING/RAD LEGS ================
-      // WHY: Sub-pass C intentionally left closing leg Spread Group IDs blank.
-      // We fill them here using resolveLiveSpreadGroupId(), which checks the live
-      // block unit state to disambiguate boundary-strike collisions between
-      // sequential spreads that share a strike (e.g. 300/310 then 310/315 PDS).
-      // Opening legs already have their Spread Group ID from Sub-pass C — only
-      // blank-spreadId rows with a spread strategy need resolution here.
+          // === LIVE SPREAD GROUP ID RESOLUTION FOR CLOSING/RAD LEGS ================
+      // WHY: Sub-pass C left closing Spread Group IDs blank on purpose.
+      // Incremental hole (URA/XE 2026-09-30): slice Mapping never saw the
+      // CDS package, so Strategy Type is Short Call and this run has no
+      // open window. Seed still holds DT|SPREAD-URA-CDS-2027-01-15-40-50.
+      // On a seeded run, also try resolve for single-leg option closes.
+      // WARN stays spread-strategy only — a real Short Call with no window
+      // is not an issue.
       const isSpreadStrategy_ = SPREAD_STRAT_TERMS.some((t) =>
         strategyType.includes(t),
       );
       const isClosingOrRAD = action.includes("TO CLOSE") || action === "RAD";
-      if (!spreadId && isSpreadStrategy_ && isClosingOrRAD && ticker) {
+      const seededRun = !!(
+        seedBlocks &&
+        typeof seedBlocks === "object" &&
+        Object.keys(seedBlocks).length > 0
+      );
+      if (
+        !spreadId &&
+        isClosingOrRAD &&
+        ticker &&
+        (isSpreadStrategy_ || seededRun)
+      ) {
         const exp_ = row[colMap["option expiration"] - 1];
         const expStr_ =
           exp_ instanceof Date
@@ -1184,8 +1288,19 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
           );
           if (resolved) {
             row[colMap["spread group id"] - 1] = resolved;
-            spreadId = resolved; // local var — used immediately in the grouping key below
+            spreadId = resolved;
+            // Mapping labeled the cover Short Call. Seed last row is CDS.
+            // Stamp that so Preview matches CCJ (covers stay the package).
+            const seedBlk = blocks[`${acct}|${resolved}`] || {};
+            if (
+              seedBlk.strategyType &&
+              !isSpreadStrategy_ &&
+              colMap["strategy type"] !== undefined
+            ) {
+              row[colMap["strategy type"] - 1] = seedBlk.strategyType;
+            }
           } else if (
+            isSpreadStrategy_ &&
             !hasContainingSpreadWindow(
               acct,
               ticker,

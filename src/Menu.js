@@ -66,7 +66,12 @@ function onOpen() {
     .addItem(
       "Debug: replay last calendar day",
       "previewIncrementalStep4ReplayLastCalendarDay",
+    )
+    .addItem(
+      "Debug: replay Helper slice (pre-increment seed)",
+      "previewIncrementalStep4ReplayHelperSlice",
     );
+
   // --- Full rebuild raw ingest (catastrophe / first load) ---
   const tosLegacyImportMenu = ui
     .createMenu("Legacy (one section at a time)")
