@@ -70,6 +70,10 @@ function onOpen() {
     .addItem(
       "Debug: replay Helper slice (pre-increment seed)",
       "previewIncrementalStep4ReplayHelperSlice",
+    )
+    .addItem(
+      "Debug: repair Master URA/XE covers from Preview",
+      "repairMasterUraXeCoversFromPreview",
     );
 
   // --- Full rebuild raw ingest (catastrophe / first load) ---

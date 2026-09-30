@@ -398,3 +398,343 @@ function appendIncrementalPreviewToMaster() {
       "Did not call appendStagingToMaster.",
   );
 }
+
+
+/**
+ * One-shot Master repair for the 9/28 incremental append.
+ *
+ * URA 50C and XE 30C covers were appended as Short Call
+ * (DT-*-SC-270115-TG001, blank spread). Seed-aware Step 4 now
+ * attaches them on Incremental Seeded Preview. This copies the
+ * Preview block fields onto the matching Master rows.
+ *
+ * Does not append. Does not write Helper / Staging / Preview.
+ * Does not call appendStagingToMaster or refreshAllScripts.
+ *
+ * Expected: 3 URA BTC + 2 XE BTC = 5 Master rows.
+ */
+function repairMasterUraXeCoversFromPreview() {
+  const t0 = pipelineTimingNow();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const master = ss.getSheetByName("Master");
+  const preview = ss.getSheetByName("Incremental Seeded Preview");
+  const staging = ss.getSheetByName("Staging");
+  if (!master) {
+    uiAlertSafe('Sheet "Master" not found.');
+    return;
+  }
+  if (!preview) {
+    uiAlertSafe(
+      "Incremental Seeded Preview not found.\n" +
+        "Run Debug: replay Helper slice (pre-increment seed) first.",
+    );
+    return;
+  }
+
+  const masterLastBefore = master.getLastRow();
+  const stagingLastBefore = staging ? staging.getLastRow() : "";
+  const previewLast = preview.getLastRow();
+  const previewLastCol = preview.getLastColumn();
+  if (previewLast < 4) {
+    uiAlertSafe(
+      "Incremental Seeded Preview has no data rows.\n" +
+        "Run Debug: replay Helper slice (pre-increment seed) first.",
+    );
+    return;
+  }
+
+  function headerMap_(grid) {
+    const col = {};
+    grid[0].forEach(function (h, i) {
+      const norm = String(h || "")
+        .trim()
+        .toLowerCase();
+      if (norm) col[norm] = i;
+    });
+    return col;
+  }
+
+  function cell_(row, col, name) {
+    return col[name] !== undefined ? row[col[name]] : "";
+  }
+
+  function isTargetTicker_(ticker) {
+    const t = String(ticker || "")
+      .trim()
+      .toUpperCase();
+    return t === "URA" || t === "XE";
+  }
+
+  function isCloseAction_(action) {
+    const a = String(action || "")
+      .trim()
+      .toUpperCase();
+    return a.indexOf("TO CLOSE") !== -1 || a === "RAD";
+  }
+
+  function previewLooksAttached_(spreadId, posId) {
+    const s = String(spreadId || "")
+      .trim()
+      .toUpperCase();
+    const p = String(posId || "")
+      .trim()
+      .toUpperCase();
+    if (s.indexOf("SPREAD-URA-CDS-") === 0) return true;
+    if (s.indexOf("SPREAD-XE-CDS-") === 0) return true;
+    if (p.indexOf("SPREAD-URA-CDS-") === 0) return true;
+    if (p.indexOf("SPREAD-XE-CDS-") === 0) return true;
+    return false;
+  }
+
+  function masterNeedsRepair_(spreadId, posId, tradeGroupId) {
+    const s = String(spreadId || "").trim();
+    const ids = (
+      String(posId || "") +
+      " " +
+      String(tradeGroupId || "")
+    ).toUpperCase();
+    if (!s) return true;
+    if (ids.indexOf("-SC-") !== -1) return true;
+    if (ids.indexOf("-CDS-") === -1) return true;
+    return false;
+  }
+
+  const fields = [
+    "spread group id",
+    "position id",
+    "trade group id",
+    "strategy type",
+    "trade type",
+    "running position quantity",
+    "block start flag",
+    "block close flag/p&l",
+    "block number",
+  ];
+
+  const mLast = master.getLastRow();
+  const mLastCol = master.getLastColumn();
+  const mGrid = master.getRange(1, 1, mLast, mLastCol).getValues();
+  const mCol = headerMap_(mGrid);
+  const pGrid = preview.getRange(1, 1, previewLast, previewLastCol).getValues();
+  const pCol = headerMap_(pGrid);
+
+  const need = ["account", "ticker", "action"].concat(fields);
+  for (let i = 0; i < need.length; i++) {
+    if (mCol[need[i]] === undefined || pCol[need[i]] === undefined) {
+      uiAlertSafe(
+        "Master or Incremental Seeded Preview is missing header:\n" +
+          need[i],
+      );
+      return;
+    }
+  }
+
+  const masterByFp = {};
+  const masterFpDup = {};
+  for (let r = 1; r < mGrid.length; r++) {
+    const acct = String(cell_(mGrid[r], mCol, "account") || "").trim();
+    if (!acct) continue;
+    const fp = incrementalRowFingerprint_(mGrid[r], mCol);
+    if (masterByFp[fp]) masterFpDup[fp] = true;
+    masterByFp[fp] = r + 1;
+  }
+
+  const hits = [];
+  let previewTargets = 0;
+  let skippedAlreadyGood = 0;
+  let skippedNoMaster = 0;
+  let skippedDupFp = 0;
+
+  for (let r = 3; r < pGrid.length; r++) {
+    const prow = pGrid[r];
+    const ticker = cell_(prow, pCol, "ticker");
+    if (!isTargetTicker_(ticker)) continue;
+    if (!isCloseAction_(cell_(prow, pCol, "action"))) continue;
+    const pSpread = cell_(prow, pCol, "spread group id");
+    const pPos = cell_(prow, pCol, "position id");
+    if (!previewLooksAttached_(pSpread, pPos)) continue;
+    previewTargets++;
+
+    const fp = incrementalRowFingerprint_(prow, pCol);
+    if (masterFpDup[fp]) {
+      skippedDupFp++;
+      continue;
+    }
+    const mRowNum = masterByFp[fp];
+    if (!mRowNum) {
+      skippedNoMaster++;
+      continue;
+    }
+    const mrow = mGrid[mRowNum - 1];
+    if (
+      !masterNeedsRepair_(
+        cell_(mrow, mCol, "spread group id"),
+        cell_(mrow, mCol, "position id"),
+        cell_(mrow, mCol, "trade group id"),
+      )
+    ) {
+      skippedAlreadyGood++;
+      continue;
+    }
+
+    const changes = [];
+    for (let f = 0; f < fields.length; f++) {
+      const name = fields[f];
+      const fromVal = mrow[mCol[name]];
+      const toVal = prow[pCol[name]];
+      const fromTxt = String(fromVal == null ? "" : fromVal).trim();
+      const toTxt = String(toVal == null ? "" : toVal).trim();
+      if (fromTxt !== toTxt) {
+        changes.push({
+          field: name,
+          fromVal: fromVal,
+          toVal: toVal,
+          fromTxt: fromTxt,
+          toTxt: toTxt,
+        });
+      }
+    }
+    if (!changes.length) {
+      skippedAlreadyGood++;
+      continue;
+    }
+
+    hits.push({
+      masterRow: mRowNum,
+      previewRow: r + 1,
+      ticker: String(ticker || "").toUpperCase(),
+      action: String(cell_(prow, pCol, "action") || ""),
+      fp: fp,
+      changes: changes,
+    });
+  }
+
+  if (!hits.length) {
+    uiAlertSafe(
+      "URA/XE Master repair — nothing to write.\n\n" +
+        "Preview attached covers scanned: " +
+        previewTargets +
+        "\n" +
+        "Already matched Preview: " +
+        skippedAlreadyGood +
+        "\n" +
+        "Preview cover with no Master fingerprint: " +
+        skippedNoMaster +
+        "\n" +
+        "Duplicate Master fingerprint (skipped): " +
+        skippedDupFp +
+        "\n" +
+        "Master last row: " +
+        masterLastBefore +
+        "\n\n" +
+        "Did not write Master.",
+    );
+    return;
+  }
+
+  let plan = "Repair " + hits.length + " Master row(s) from Preview.\n\n";
+  if (hits.length !== 5) {
+    plan +=
+      "NOTE: expected 5 covers (3 URA + 2 XE). Review the list.\n\n";
+  }
+  for (let i = 0; i < hits.length; i++) {
+    const h = hits[i];
+    plan +=
+      "Master R" +
+      h.masterRow +
+      " " +
+      h.ticker +
+      " " +
+      h.action +
+      " (" +
+      h.changes.length +
+      " fields)\n";
+  }
+  plan +=
+    "\nOK creates Master_Backup_… then overwrites those cells only.\n" +
+    "Master last row stays " +
+    masterLastBefore +
+    ".\n" +
+    "Cancel leaves Master unchanged.";
+
+  const resp = ui.alert(
+    "Repair Master URA/XE covers",
+    plan,
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (resp !== ui.Button.OK) return;
+
+  backupMasterSheet();
+
+  const log = [
+    [
+      "Master Row",
+      "Preview Row",
+      "Ticker",
+      "Action",
+      "Field",
+      "Master Before",
+      "Preview",
+    ],
+  ];
+  let cells = 0;
+  for (let i = 0; i < hits.length; i++) {
+    const h = hits[i];
+    for (let c = 0; c < h.changes.length; c++) {
+      const ch = h.changes[c];
+      const col1 = mCol[ch.field] + 1;
+      master.getRange(h.masterRow, col1).setValue(ch.toVal);
+      cells++;
+      log.push([
+        h.masterRow,
+        h.previewRow,
+        h.ticker,
+        h.action,
+        ch.field,
+        ch.fromTxt,
+        ch.toTxt,
+      ]);
+    }
+  }
+
+  let logSh = ss.getSheetByName("URA XE Master Repair Log");
+  if (!logSh) logSh = ss.insertSheet("URA XE Master Repair Log");
+  logSh.clearContents();
+  logSh.getRange(1, 1, log.length, log[0].length).setValues(log);
+  logSh.setFrozenRows(1);
+
+  const masterLastAfter = master.getLastRow();
+  const stagingLastAfter = staging ? staging.getLastRow() : "";
+
+  pipelineTimingLog(
+    "repairMasterUraXeCoversFromPreview",
+    t0,
+    "rows=" + hits.length + " cells=" + cells + " masterLast=" + masterLastAfter,
+  );
+
+  uiAlertSafe(
+    "URA/XE Master repair wrote " +
+      hits.length +
+      " row(s), " +
+      cells +
+      " cell(s).\n\n" +
+      "Master last row before/after: " +
+      masterLastBefore +
+      " / " +
+      masterLastAfter +
+      "\n" +
+      "Staging last row before/after: " +
+      stagingLastBefore +
+      " / " +
+      stagingLastAfter +
+      "\n" +
+      "Preview last row (unchanged): " +
+      previewLast +
+      "\n\n" +
+      "Open URA XE Master Repair Log for before/after.\n" +
+      "Then run Inspect seed blocks from Master.\n" +
+      "Want URA CDS live unit 3, XE CDS live unit 2, no live SC keys.\n" +
+      "Did not append. Did not write Helper / Staging.",
+  );
+}
