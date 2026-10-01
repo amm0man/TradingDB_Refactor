@@ -1412,7 +1412,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         typeof seedBlocks === "object" &&
         Object.keys(seedBlocks).length > 0
       );
-      if (
+          if (
         !spreadId &&
         isClosingOrRAD &&
         ticker &&
@@ -1443,53 +1443,71 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
               : "";
           const expiredRad_ =
             action === "RAD" && acctAct_.indexOf("OPT EXPIRED") !== -1;
-          const resolved = resolveLiveSpreadGroupId(
-            acct,
-            ticker,
-            expStr_,
-            strategyType,
-            strike_,
-            spreadRangeMap,
-            blocks,
-            rowMs_,
-            cp_,
-            rowDay_,
-            expiredRad_,
-          );
-          if (resolved) {
-            row[colMap["spread group id"] - 1] = resolved;
-            spreadId = resolved;
-            // Mapping labeled the cover Short Call. Seed last row is CDS.
-            // Stamp that so Preview matches CCJ (covers stay the package).
-            const seedBlk = blocks[`${acct}|${resolved}`] || {};
-            if (
-              seedBlk.strategyType &&
-              !isSpreadStrategy_ &&
-              colMap["strategy type"] !== undefined
-            ) {
-              row[colMap["strategy type"] - 1] = seedBlk.strategyType;
-            }
-          } else if (
-            isSpreadStrategy_ &&
-            !hasContainingSpreadWindow(
+          // 2026-10-01 LT SPY 392C: 8 single-leg longs were open.
+          // CCS 392-393 still had the long 393s, so the window stole the STC 8.
+          // Leave Spread Group ID blank so the option identity key closes them.
+          const singleKey_ =
+            acct + "|" + ticker + "|" + expStr_ + "|" + strike_ + "|" + cp_;
+          const singleBlock_ = blocks[singleKey_] || {};
+          const singleUnit_ = Number(singleBlock_.unit) || 0;
+          const singleStrat_ = String(
+            singleBlock_.strategyType || "",
+          ).toUpperCase();
+          const preferSingleLeg_ =
+            singleUnit_ > 0 &&
+            ((action.indexOf("SELL TO CLOSE") >= 0 &&
+              singleStrat_.indexOf("LONG") >= 0) ||
+              (action.indexOf("BUY TO CLOSE") >= 0 &&
+                singleStrat_.indexOf("SHORT") >= 0));
+          if (!preferSingleLeg_) {
+            const resolved = resolveLiveSpreadGroupId(
               acct,
               ticker,
               expStr_,
+              strategyType,
               strike_,
               spreadRangeMap,
-            )
-          ) {
-            ctxMissingSpreadGroup++;
-            importIssuesAdd(
-              ctx,
-              "WARN",
-              dataStartRow + i,
-              "Spread Group ID",
-              `${acct}|${ticker}|${expStr_}|${strike_}`,
-              "No live spread group found for this closing/RAD row. " +
-                "Possible cause: no matching open block at this timestamp. " +
-                "Check that the opening trade exists and processed before this row.",
+              blocks,
+              rowMs_,
+              cp_,
+              rowDay_,
+              expiredRad_,
             );
+            if (resolved) {
+              row[colMap["spread group id"] - 1] = resolved;
+              spreadId = resolved;
+              // Mapping labeled the cover Short Call. Seed last row is CDS.
+              // Stamp that so Preview matches CCJ (covers stay the package).
+              const seedBlk = blocks[`${acct}|${resolved}`] || {};
+              if (
+                seedBlk.strategyType &&
+                !isSpreadStrategy_ &&
+                colMap["strategy type"] !== undefined
+              ) {
+                row[colMap["strategy type"] - 1] = seedBlk.strategyType;
+              }
+            } else if (
+              isSpreadStrategy_ &&
+              !hasContainingSpreadWindow(
+                acct,
+                ticker,
+                expStr_,
+                strike_,
+                spreadRangeMap,
+              )
+            ) {
+              ctxMissingSpreadGroup++;
+              importIssuesAdd(
+                ctx,
+                "WARN",
+                dataStartRow + i,
+                "Spread Group ID",
+                `${acct}|${ticker}|${expStr_}|${strike_}`,
+                "No live spread group found for this closing/RAD row. " +
+                  "Possible cause: no matching open block at this timestamp. " +
+                  "Check that the opening trade exists and processed before this row.",
+              );
+            }
           }
         }
       }
