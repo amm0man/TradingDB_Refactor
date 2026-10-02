@@ -1412,7 +1412,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         typeof seedBlocks === "object" &&
         Object.keys(seedBlocks).length > 0
       );
-          if (
+      if (
         !spreadId &&
         isClosingOrRAD &&
         ticker &&
@@ -1442,7 +1442,9 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
                   .toUpperCase()
               : "";
           const expiredRad_ =
-            action === "RAD" && acctAct_.indexOf("OPT EXPIRED") !== -1;
+            action === "RAD" &&
+            (acctAct_.indexOf("OPT EXPIRED") !== -1 ||
+              acctAct_.indexOf("OPTION REMOVAL") !== -1);
           // 2026-10-01 LT SPY 392C: 8 single-leg longs were open.
           // CCS 392-393 still had the long 393s, so the window stole the STC 8.
           // Leave Spread Group ID blank so the option identity key closes them.
