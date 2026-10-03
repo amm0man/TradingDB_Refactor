@@ -2140,7 +2140,7 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       checkMissingDateTimeAndAlert(
         destSheet,
         4,
-        "populateStagingWithBlockLogicV3",
+        "populateStagingWithBlockLogicV3" + (isPreviewDest ? " (preview)" : ""),
       );
     }
 

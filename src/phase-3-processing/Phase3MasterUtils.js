@@ -302,6 +302,52 @@ function appendIncrementalPreviewToMaster() {
     return;
   }
 
+  // Stop before backup/append if a date the seed needs is blank.
+  // Trade Time Stamp blank breaks the next candidate fingerprint.
+  // Option Expiration blank breaks option block keys.
+  const stampIdx = pCol["trade time stamp"];
+  const expIdx = pCol["option expiration"];
+  const cpIdx = pCol["call/put"];
+  const strikeIdx = pCol["option strike"];
+  let blankDateRows = 0;
+  const blankDateSamples = [];
+  for (let i = 0; i < toAppend.length; i++) {
+    const row = toAppend[i];
+    const stamp = stampIdx !== undefined ? row[stampIdx] : "";
+    const hasStamp = stamp instanceof Date || String(stamp || "").trim() !== "";
+    const cp = cpIdx !== undefined ? String(row[cpIdx] || "").trim() : "";
+    const strike =
+      strikeIdx !== undefined ? String(row[strikeIdx] || "").trim() : "";
+    const isOption = cp !== "" || strike !== "";
+    const exp = expIdx !== undefined ? row[expIdx] : "";
+    const hasExp =
+      !isOption || exp instanceof Date || String(exp || "").trim() !== "";
+    if (!hasStamp || !hasExp) {
+      blankDateRows++;
+      if (blankDateSamples.length < 5) {
+        const acct = pCol["account"] !== undefined ? row[pCol["account"]] : "";
+        const ticker = pCol["ticker"] !== undefined ? row[pCol["ticker"]] : "";
+        blankDateSamples.push(
+          String(acct) +
+            " " +
+            String(ticker) +
+            (!hasStamp ? " — missing Trade Time Stamp" : "") +
+            (!hasExp ? " — missing Option Expiration" : ""),
+        );
+      }
+    }
+  }
+  if (blankDateRows > 0) {
+    uiAlertSafe(
+      "Incremental append stopped. Did not backup Master.\n\n" +
+        blankDateRows +
+        " preview row(s) are missing a date the seed needs.\n" +
+        blankDateSamples.join("\n") +
+        "\n\nFix Incremental Seeded Preview, then run step 11 again.",
+    );
+    return;
+  }
+
   const resp = ui.alert(
     "Append incremental preview → Master",
     "Master last ts: " +
@@ -398,7 +444,6 @@ function appendIncrementalPreviewToMaster() {
       "Did not call appendStagingToMaster.",
   );
 }
-
 
 /**
  * One-shot Master repair for the 9/28 incremental append.
@@ -523,8 +568,7 @@ function repairMasterUraXeCoversFromPreview() {
   for (let i = 0; i < need.length; i++) {
     if (mCol[need[i]] === undefined || pCol[need[i]] === undefined) {
       uiAlertSafe(
-        "Master or Incremental Seeded Preview is missing header:\n" +
-          need[i],
+        "Master or Incremental Seeded Preview is missing header:\n" + need[i],
       );
       return;
     }
@@ -635,8 +679,7 @@ function repairMasterUraXeCoversFromPreview() {
 
   let plan = "Repair " + hits.length + " Master row(s) from Preview.\n\n";
   if (hits.length !== 5) {
-    plan +=
-      "NOTE: expected 5 covers (3 URA + 2 XE). Review the list.\n\n";
+    plan += "NOTE: expected 5 covers (3 URA + 2 XE). Review the list.\n\n";
   }
   for (let i = 0; i < hits.length; i++) {
     const h = hits[i];
@@ -710,7 +753,12 @@ function repairMasterUraXeCoversFromPreview() {
   pipelineTimingLog(
     "repairMasterUraXeCoversFromPreview",
     t0,
-    "rows=" + hits.length + " cells=" + cells + " masterLast=" + masterLastAfter,
+    "rows=" +
+      hits.length +
+      " cells=" +
+      cells +
+      " masterLast=" +
+      masterLastAfter,
   );
 
   uiAlertSafe(
