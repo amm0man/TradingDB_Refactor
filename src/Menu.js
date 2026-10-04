@@ -71,10 +71,7 @@ function onOpen() {
       "Debug: replay Helper slice (pre-increment seed)",
       "previewIncrementalStep4ReplayHelperSlice",
     )
-    .addItem(
-      "Debug: repair Master URA/XE covers from Preview",
-      "repairMasterUraXeCoversFromPreview",
-    );
+    .addItem("Debug: open positions on Staging", "auditOpenPositions");
 
   // --- Full rebuild raw ingest (catastrophe / first load) ---
   const tosLegacyImportMenu = ui
