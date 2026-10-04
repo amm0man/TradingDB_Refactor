@@ -622,6 +622,8 @@ function auditSchwabMappingV3() {
       "PALAF", // added 9/11/26 PALAF had a reverse split so has an entry in Corp Actions. Resolves thru Phase 3 block logic correctly
       "ISOU", // added after verifying this is a reverse split on 2025-3-25. Resolves thru Phase 3 block logic correctly
       "CGAU", // 2026-09-02 cash dividend, Centerra Gold. No trade row in this book. Not a DRIP.
+      "PAAS", // 2026-09-04 cash dividend, Pan American Silver. Corp Action Map. No trade row. Not a DRIP.
+      "SSRM", // 2026-09-11 cash dividend, SSR Mining. Corp Action Map. No trade row. Not a DRIP.
     ]);
 
     let crossRefWarns = 0;
