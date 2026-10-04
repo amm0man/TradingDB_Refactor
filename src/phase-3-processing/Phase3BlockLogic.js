@@ -1936,6 +1936,12 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       row[colMap["position id"] - 1] = posId;
 
       // Trade Group ID
+      // Single-leg options include strike + C/P so a Phase 5 filter on
+      // Trade Group ID returns one contract. Without the strike, every first
+      // CCJ long call for 250117 shared DT-CCJ-LC-250117-TG001. The block key
+      // was already per strike; only the printed ID collided. Spreads keep
+      // Spread Group ID (the strike range is already in that id). Stock has
+      // no strike.
       const optExpRaw = row[colMap["option expiration"] - 1];
       const optExpStr =
         optExpRaw instanceof Date
@@ -1946,10 +1952,20 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         blockStrategyType || blocks[key].strategyType,
       );
       const tgSuffix = `TG${String(tgBlock).padStart(3, "0")}`;
+      let optStrikeToken = "";
+      if (isOption && !spreadId) {
+        const strikeTg = Number(row[colMap["option strike"] - 1]) || 0;
+        const cpTg = (row[colMap["call/put"] - 1] || "")
+          .toString()
+          .toUpperCase()
+          .replace("CALL", "C")
+          .replace("PUT", "P");
+        optStrikeToken = `-${String(Math.round(strikeTg)).padStart(5, "0")}${cpTg}`;
+      }
 
       const tradeGroupId = spreadId
         ? `${spreadId}-${tgSuffix}`
-        : `${acct}-${ticker}-${stratAbbrev}${isOption && optExpStr ? "-" + optExpStr : ""}-${tgSuffix}`;
+        : `${acct}-${ticker}-${stratAbbrev}${isOption && optExpStr ? "-" + optExpStr : ""}${optStrikeToken}-${tgSuffix}`;
 
       row[colMap["trade group id"] - 1] = tradeGroupId;
       blocks[key].tradeGroupId = tradeGroupId;
