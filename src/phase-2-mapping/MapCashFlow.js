@@ -109,6 +109,18 @@ function applyCashFlowFromMapV3(
     );
   }
 
+  // Checking ACH is one keyword tag. Split it once Total Cost sign is known
+  // so Phase 5 can filter ACH In vs ACH Out without reading the amount.
+  // Positive Total Cost = money into the brokerage. Negative = money out.
+  let accountActionOut = accountActionTag;
+  let transferTypeOut = type;
+  if (accountActionTag === "ACH In or Out" && dir) {
+    const moneyIn = dir === "Inflow";
+    accountActionOut = moneyIn ? "ACH In" : "ACH Out";
+    transferTypeOut = moneyIn ? "Checking Account In" : "Checking Account Out";
+  }
+
+  mappedRow[col(mappingHeaderMap, "Account Actions")] = accountActionOut;
   mappedRow[col(mappingHeaderMap, "Cash Flow Direction")] = dir;
-  mappedRow[col(mappingHeaderMap, "Transfer Type")] = type;
+  mappedRow[col(mappingHeaderMap, "Transfer Type")] = transferTypeOut;
 }
