@@ -2018,8 +2018,64 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
       "rows=" + data.length,
     );
 
-    // ── POST-PASS: Link stock settlement legs to their parent spread block ────
-    const closingSpreadLookup = {};
+    // ── POST-PASS: assignment / exercise stock only ────
+    // WHY: the old key was Account|Ticker|Closing Date and last close won.
+    // Any same-day stock Buy to Open / Sell to Close inherited that parent,
+    // so a short-IC expiration stamped a 300-share round trip as -ST.
+    // Keep -ST only for a one-sided 100-share settlement:
+    //   short put assign or long-call exercise -> Buy to Open
+    //   short call assign or long-put exercise -> Sell to Close
+    //   stock qty must equal that option qty × 100
+    // A same-day stock round trip (signed qty nets to 0) is not a settlement.
+    // An EXERCISE / ASSIGN option row is a parent even if the block is still open,
+    // so the 05/28 LT DNN partial exercise links. Trade Time Stamp is not the key.
+    const settlementParents = {};
+    const stockDaySigned = {};
+
+    function settlementCp_(posId) {
+      const m = String(posId || "").toUpperCase().match(/(\d{5})([CP])(?:-TG|$)/);
+      return m ? m[2] : "";
+    }
+
+    function settlementAction_(strategy, cp) {
+      const s = String(strategy || "").toUpperCase();
+      const right = String(cp || "").toUpperCase();
+      if (s.indexOf("SHORT PUT") >= 0) return "BUY TO OPEN";
+      if (s.indexOf("LONG CALL") >= 0) return "BUY TO OPEN";
+      if (s.indexOf("SHORT CALL") >= 0) return "SELL TO CLOSE";
+      if (s.indexOf("LONG PUT") >= 0) return "SELL TO CLOSE";
+      if ((s.indexOf("EXERCISE") >= 0 || s.indexOf("ASSIGN") >= 0) && right === "C") {
+        return "BUY TO OPEN";
+      }
+      if ((s.indexOf("EXERCISE") >= 0 || s.indexOf("ASSIGN") >= 0) && right === "P") {
+        return "SELL TO CLOSE";
+      }
+      return "";
+    }
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowTradeType = row[colMap["trade type"] - 1]
+        .toString()
+        .toUpperCase()
+        .trim();
+      const rowAction = row[colMap["action"] - 1]
+        .toString()
+        .trim()
+        .toUpperCase();
+      const rowAcct = row[colMap["account"] - 1].toString().toUpperCase();
+      const rowTicker = row[colMap["ticker"] - 1].toString().toUpperCase();
+      const tradeDate = row[colMap["trade date"] - 1];
+      if (rowTradeType !== "STOCK") continue;
+      if (rowAction !== "BUY TO OPEN" && rowAction !== "SELL TO CLOSE") continue;
+      if (!(tradeDate instanceof Date)) continue;
+      const tradeDateStr = Utilities.formatDate(tradeDate, tz, "yyyy-MM-dd");
+      const dayKey = rowAcct + "|" + rowTicker + "|" + tradeDateStr;
+      const qty = Math.abs(Number(row[colMap["quantity"] - 1]) || 0);
+      const signed = rowAction === "BUY TO OPEN" ? qty : -qty;
+      stockDaySigned[dayKey] = (stockDaySigned[dayKey] || 0) + signed;
+    }
+
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const blockCloseFlag = row[colMap["block close flag/p&l"] - 1];
@@ -2027,24 +2083,35 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         .toString()
         .toUpperCase()
         .trim();
-      if (blockCloseFlag !== 1 && blockCloseFlag !== "1") continue;
       if (rowTradeType === "STOCK") continue;
+      const rowStrat = row[colMap["strategy type"] - 1].toString().trim();
+      const stratUpper = rowStrat.toUpperCase();
+      const closed = blockCloseFlag === 1 || blockCloseFlag === "1";
+      const isExercise =
+        stratUpper.indexOf("EXERCISE") >= 0 || stratUpper.indexOf("ASSIGN") >= 0;
+      if (!closed && !isExercise) continue;
       const rowAcct = row[colMap["account"] - 1].toString().toUpperCase();
       const rowTicker = row[colMap["ticker"] - 1].toString().toUpperCase();
       const rowTgId = row[colMap["trade group id"] - 1].toString().trim();
-      const rowStrat = row[colMap["strategy type"] - 1].toString().trim();
+      const rowPosId = row[colMap["position id"] - 1].toString().trim();
       const closingDate = row[colMap["closing date"] - 1];
-      if (!rowAcct || !rowTicker || !rowTgId || !(closingDate instanceof Date))
-        continue;
-      const closingDateStr = Utilities.formatDate(
-        closingDate,
-        tz,
-        "yyyy-MM-dd",
-      );
-      closingSpreadLookup[`${rowAcct}|${rowTicker}|${closingDateStr}`] = {
+      const tradeDate = row[colMap["trade date"] - 1];
+      const parentDate = closingDate instanceof Date ? closingDate : tradeDate;
+      if (!rowAcct || !rowTicker || !rowTgId || !(parentDate instanceof Date)) continue;
+      const cp = settlementCp_(rowPosId);
+      const wantAction = settlementAction_(rowStrat, cp);
+      if (!wantAction) continue;
+      const optQty = Math.abs(Number(row[colMap["quantity"] - 1]) || 0);
+      if (!(optQty > 0)) continue;
+      const dayKey =
+        rowAcct + "|" + rowTicker + "|" + Utilities.formatDate(parentDate, tz, "yyyy-MM-dd");
+      if (!settlementParents[dayKey]) settlementParents[dayKey] = [];
+      settlementParents[dayKey].push({
         tgId: rowTgId,
         strategy: rowStrat,
-      };
+        wantAction: wantAction,
+        stockQty: optQty * 100,
+      });
     }
 
     for (let i = 0; i < data.length; i++) {
@@ -2058,26 +2125,35 @@ function populateStagingWithBlockLogicV3(seedBlocks, ioOptions) {
         .toString()
         .trim()
         .toUpperCase();
-      if (rowAction !== "BUY TO OPEN" && rowAction !== "SELL TO CLOSE")
-        continue;
+      if (rowAction !== "BUY TO OPEN" && rowAction !== "SELL TO CLOSE") continue;
       const rowAcct = row[colMap["account"] - 1].toString().toUpperCase();
       const rowTicker = row[colMap["ticker"] - 1].toString().toUpperCase();
       const tradeDate = row[colMap["trade date"] - 1];
       if (!(tradeDate instanceof Date)) continue;
-      const tradeDateStr = Utilities.formatDate(tradeDate, tz, "yyyy-MM-dd");
-      const parent =
-        closingSpreadLookup[`${rowAcct}|${rowTicker}|${tradeDateStr}`];
+      const dayKey =
+        rowAcct + "|" + rowTicker + "|" + Utilities.formatDate(tradeDate, tz, "yyyy-MM-dd");
+      if (Math.abs(stockDaySigned[dayKey] || 0) < 1e-6) continue;
+      const stockQty = Math.abs(Number(row[colMap["quantity"] - 1]) || 0);
+      if (!(stockQty > 0) || stockQty % 100 !== 0) continue;
+      const parents = settlementParents[dayKey] || [];
+      let parent = null;
+      for (let p = 0; p < parents.length; p++) {
+        if (parents[p].wantAction === rowAction && parents[p].stockQty === stockQty) {
+          parent = parents[p];
+          break;
+        }
+      }
       if (!parent) continue;
-      row[colMap["trade group id"] - 1] = `${parent.tgId}-ST`;
-      row[colMap["position id"] - 1] = `${parent.tgId}-ST`;
+      row[colMap["trade group id"] - 1] = parent.tgId + "-ST";
+      row[colMap["position id"] - 1] = parent.tgId + "-ST";
       row[colMap["strategy type"] - 1] = parent.strategy;
       importIssuesAdd(
         ctx,
         "INFO",
         dataStartRow + i,
         "Trade Group ID",
-        `${parent.tgId}-ST`,
-        `Stock settlement leg linked to parent spread block. TG ID → ${parent.tgId}-ST`,
+        parent.tgId + "-ST",
+        "Assignment/exercise stock linked to parent. TG ID → " + parent.tgId + "-ST",
       );
     }
     // ── END POST-PASS ─────────────────────────────────────────────────────────
